@@ -1,0 +1,6 @@
+{
+  "name": "MeshTalk - Offline Mesh Calling & Chat",
+  "description": "An offline cross-platform mesh messaging and voice calling app using BLE, Wi-Fi Hotspot simulation, multi-hop relay nodes, and E2EE encryption.",
+  "requestFramePermissions": ["microphone"],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
