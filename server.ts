@@ -5,18 +5,32 @@ import fs from 'fs';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
 import { MeshNode, MeshPacket, ActiveRoute, EmergencyAlert } from './src/types/mesh';
+import {
+  initDatabase,
+  saveOrUpdateUser,
+  getUser,
+  getAllUsers,
+  saveChatMessage,
+  getChatHistory,
+  saveSharedFile,
+  getSharedFiles,
+  isDbConnected,
+  UserRecord as DbUserRecord,
+} from './src/db/database';
 
 const PORT = 3000;
 const app = express();
-app.use(express.json({ limit: '10mb' }));
+app.use(express.json({ limit: '50mb' }));
 
-// Persistent Database for Registered Users (Code + Name + PIN)
+// Persistent Local Database Fallback for Registered Users (Code + Name + PIN + Phone + Photo)
 const DB_FILE_PATH = path.join(process.cwd(), 'mesh_user_db.json');
 
 interface UserRecord {
   code: string;
   name: string;
+  phone?: string;
   pin: string;
+  profile_photo?: string;
   registeredAt: number;
 }
 
@@ -30,10 +44,10 @@ try {
   } else {
     // Default Preset Users
     userAccounts = {
-      '882910': { code: '882910', name: 'রহিম আহমেদ', pin: '1234', registeredAt: Date.now() },
-      '123456': { code: '123456', name: 'আরিফ হাসান', pin: '1234', registeredAt: Date.now() },
-      '554433': { code: '554433', name: 'তানভীর হোসাইন', pin: '1234', registeredAt: Date.now() },
-      '998877': { code: '998877', name: 'নাসরিন আক্তার', pin: '1234', registeredAt: Date.now() },
+      '882910': { code: '882910', name: 'রহিম আহমেদ', phone: '01711000000', pin: '1234', registeredAt: Date.now() },
+      '123456': { code: '123456', name: 'আরিফ হাসান', phone: '01811000000', pin: '1234', registeredAt: Date.now() },
+      '554433': { code: '554433', name: 'তানভীর হোসাইন', phone: '01911000000', pin: '1234', registeredAt: Date.now() },
+      '998877': { code: '998877', name: 'নাসরিন আক্তার', phone: '01611000000', pin: '1234', registeredAt: Date.now() },
     };
     fs.writeFileSync(DB_FILE_PATH, JSON.stringify(userAccounts, null, 2));
   }
@@ -48,6 +62,7 @@ function saveUserDbToDisk() {
     console.error('Failed to save user DB to disk:', e);
   }
 }
+
 
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
@@ -333,6 +348,8 @@ wss.on('connection', (ws) => {
         const nodeId = data.nodeId || data.code;
         const name = data.name;
         const pin = data.pin;
+        const phone = data.phone;
+        const photo = data.profile_photo || data.photo;
 
         if (nodeId) {
           // Check PIN Security for registered numbers
@@ -347,14 +364,26 @@ wss.on('connection', (ws) => {
             return;
           }
 
-          // Save or update account in persistent DB
+          // Save or update account in persistent local + MySQL DB
           userAccounts[nodeId] = {
             code: nodeId,
             name: name || existingAcc?.name || `ইউজার (${nodeId})`,
+            phone: phone || existingAcc?.phone || '',
             pin: pin || existingAcc?.pin || '1234',
+            profile_photo: photo || existingAcc?.profile_photo,
             registeredAt: existingAcc?.registeredAt || Date.now(),
           };
           saveUserDbToDisk();
+
+          // Save to MySQL DB if connected
+          saveOrUpdateUser({
+            code: nodeId,
+            name: userAccounts[nodeId].name,
+            phone: userAccounts[nodeId].phone,
+            pin: userAccounts[nodeId].pin,
+            profile_photo: userAccounts[nodeId].profile_photo,
+            registeredAt: userAccounts[nodeId].registeredAt,
+          });
 
           const oldNodeId = clientNodeMap.get(ws);
           clientNodeMap.set(ws, nodeId);
@@ -364,6 +393,7 @@ wss.on('connection', (ws) => {
             matchedNode.status = 'ONLINE';
             matchedNode.lastSeen = Date.now();
             if (name) matchedNode.name = name;
+            if (photo) matchedNode.avatarUrl = photo;
           } else {
             // Register new 6-digit user node in active topology
             matchedNode = {
@@ -379,6 +409,7 @@ wss.on('connection', (ws) => {
               connectedPeers: ['node-relay-01', 'node-relay-02'],
               publicKey: `MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A${nodeId}`,
               lastSeen: Date.now(),
+              avatarUrl: photo,
               ipAddress: `192.168.43.${Math.floor(Math.random() * 150) + 20}`,
             };
             meshNodes.push(matchedNode);
@@ -390,6 +421,7 @@ wss.on('connection', (ws) => {
               type: 'AUTH_SUCCESS',
               code: nodeId,
               name: userAccounts[nodeId].name,
+              user: userAccounts[nodeId],
             })
           );
 
@@ -411,6 +443,11 @@ wss.on('connection', (ws) => {
         const target = meshNodes.find((n) => n.id === id);
         if (target && name) {
           target.name = name;
+          if (userAccounts[id]) {
+            userAccounts[id].name = name;
+            saveUserDbToDisk();
+            saveOrUpdateUser(userAccounts[id]);
+          }
           broadcastToAllWs({ type: 'TOPOLOGY_UPDATED', nodes: meshNodes, onlineCount: activeSockets.size });
         }
       } else if (data.type === 'UPDATE_NODE_POSITION') {
@@ -455,6 +492,35 @@ wss.on('connection', (ws) => {
         }
 
         meshPackets.push(packet);
+
+        // Save Chat Message to MySQL DB
+        saveChatMessage({
+          packetId: packet.id,
+          senderId: packet.senderId,
+          senderName: packet.senderName,
+          targetId: packet.targetId,
+          content: packet.encryptedPayload || '',
+          type: packet.fileName ? 'FILE' : packet.type === 'VOICE_MEMO' ? 'VOICE' : packet.type === 'EMERGENCY_SOS' ? 'SOS' : 'TEXT',
+          encryptedContent: packet.encryptedPayload,
+          routingTrace: packet.routingTrace,
+          hopCount: packet.hopCount,
+          timestamp: packet.timestamp || Date.now(),
+        });
+
+        // If File packet, also save to MySQL shared_files
+        if (packet.fileName && packet.encryptedPayload) {
+          saveSharedFile({
+            fileId: packet.id,
+            senderId: packet.senderId,
+            senderName: packet.senderName,
+            fileName: packet.fileName,
+            fileType: 'application/octet-stream',
+            fileSize: `${Math.round(packet.encryptedPayload.length * 0.75 / 1024)} KB`,
+            fileData: packet.encryptedPayload,
+            uploadedAt: packet.timestamp || Date.now(),
+          });
+        }
+
         broadcastToAllWs({ type: 'PACKET_RELAYED', packet, route });
       } else if (data.type === 'EMERGENCY_SOS_BROADCAST') {
         const alert: EmergencyAlert = data.alert;
@@ -497,7 +563,7 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Express API Routes
+// Express API Routes & Database Management
 app.get('/api/mesh/nodes', (req, res) => {
   res.json({ status: 'ok', nodes: meshNodes });
 });
@@ -518,8 +584,131 @@ app.post('/api/mesh/reset', (req, res) => {
   res.json({ success: true, nodes: meshNodes });
 });
 
+// Database Status & Operations API
+app.get('/api/db/status', (req, res) => {
+  res.json({
+    connected: isDbConnected(),
+    databaseName: process.env.DB_NAME || 'national_banglacallapp',
+    host: process.env.DB_HOST || 'localhost',
+    userCount: Object.keys(userAccounts).length,
+    packetCount: meshPackets.length,
+  });
+});
+
+app.get('/api/db/users', async (req, res) => {
+  try {
+    const dbUsers = await getAllUsers();
+    res.json({ success: true, users: dbUsers, localUsers: userAccounts });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/db/users/update', async (req, res) => {
+  try {
+    const { code, name, phone, pin, profile_photo } = req.body;
+    if (!code) {
+      return res.status(400).json({ error: 'User code is required' });
+    }
+
+    const existing: UserRecord = userAccounts[code] || { code, name: name || code, phone: phone || '', pin: pin || '1234', profile_photo: profile_photo || '', registeredAt: Date.now() };
+    const updated: UserRecord = {
+      code,
+      name: name || existing.name,
+      phone: phone || existing.phone,
+      pin: pin || existing.pin,
+      profile_photo: profile_photo || existing.profile_photo,
+      registeredAt: existing.registeredAt,
+    };
+
+    userAccounts[code] = updated;
+    saveUserDbToDisk();
+
+    // Also update matched mesh node
+    const matchedNode = meshNodes.find((n) => n.id === code);
+    if (matchedNode) {
+      matchedNode.name = updated.name;
+      if (updated.profile_photo) matchedNode.avatarUrl = updated.profile_photo;
+    }
+
+    const savedInDb = await saveOrUpdateUser({
+      code: updated.code,
+      name: updated.name,
+      phone: updated.phone,
+      pin: updated.pin,
+      profile_photo: updated.profile_photo,
+      registeredAt: updated.registeredAt,
+    });
+
+    res.json({ success: true, user: updated, savedInDb });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/db/chat', async (req, res) => {
+  try {
+    const user1 = req.query.user1 as string;
+    const user2 = req.query.user2 as string;
+    const history = await getChatHistory(user1, user2);
+    res.json({ success: true, history });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.get('/api/db/files', async (req, res) => {
+  try {
+    const senderId = req.query.senderId as string;
+    const files = await getSharedFiles(senderId);
+    res.json({ success: true, files });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+app.post('/api/db/files/upload', async (req, res) => {
+  try {
+    const { fileId, senderId, senderName, fileName, fileType, fileSize, fileData } = req.body;
+    if (!fileId || !senderId || !fileName) {
+      return res.status(400).json({ error: 'fileId, senderId, and fileName are required' });
+    }
+
+    const record = {
+      fileId,
+      senderId,
+      senderName: senderName || senderId,
+      fileName,
+      fileType: fileType || 'application/octet-stream',
+      fileSize: fileSize || '0 KB',
+      fileData,
+      uploadedAt: Date.now(),
+    };
+
+    const saved = await saveSharedFile(record);
+    res.json({ success: true, saved, file: record });
+  } catch (err: any) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 // Setup Vite Development Server or Static Serving
 async function startServer() {
+  // Initialize MySQL database
+  console.log('[Server] Initializing MySQL Database...');
+  const dbConnected = await initDatabase();
+  if (dbConnected) {
+    try {
+      const dbUsers = await getAllUsers();
+      if (Object.keys(dbUsers).length > 0) {
+        userAccounts = { ...userAccounts, ...dbUsers };
+        saveUserDbToDisk();
+      }
+    } catch (e) {
+      console.error('[Server] Failed syncing initial DB users:', e);
+    }
+  }
+
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -540,3 +729,4 @@ async function startServer() {
 }
 
 startServer();
+

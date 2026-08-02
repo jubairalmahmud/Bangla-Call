@@ -28,9 +28,265 @@ var import_path = __toESM(require("path"), 1);
 var import_fs = __toESM(require("fs"), 1);
 var import_ws = require("ws");
 var import_vite = require("vite");
+
+// src/db/database.ts
+var import_promise = __toESM(require("mysql2/promise"), 1);
+var DB_HOST = process.env.DB_HOST || "localhost";
+var DB_USER = process.env.DB_USER || "national_banglacall";
+var DB_PASSWORD = process.env.DB_PASSWORD || "Banglacallapp@2026";
+var DB_NAME = process.env.DB_NAME || "national_banglacallapp";
+var DB_PORT = Number(process.env.DB_PORT) || 3306;
+var pool = null;
+var isConnected = false;
+async function initDatabase() {
+  try {
+    console.log(`[Database] Attempting connection to MySQL DB '${DB_NAME}' on '${DB_HOST}:${DB_PORT}'...`);
+    pool = import_promise.default.createPool({
+      host: DB_HOST,
+      user: DB_USER,
+      password: DB_PASSWORD,
+      database: DB_NAME,
+      port: DB_PORT,
+      waitForConnections: true,
+      connectionLimit: 10,
+      queueLimit: 0
+    });
+    const connection = await pool.getConnection();
+    console.log(`[Database] \u2705 MySQL Database Connected Successfully!`);
+    connection.release();
+    isConnected = true;
+    await createTables();
+    return true;
+  } catch (error) {
+    console.warn(`[Database] \u26A0\uFE0F MySQL Connection failed (${error.message}). Running in fallback local mode.`);
+    isConnected = false;
+    return false;
+  }
+}
+async function createTables() {
+  if (!pool || !isConnected) return;
+  try {
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS users (
+        code VARCHAR(64) PRIMARY KEY,
+        name VARCHAR(255) NOT NULL,
+        phone VARCHAR(50) DEFAULT NULL,
+        pin VARCHAR(50) NOT NULL DEFAULT '1234',
+        profile_photo LONGTEXT DEFAULT NULL,
+        registered_at BIGINT NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ON UPDATE CURRENT_TIMESTAMP
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS chat_history (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        packet_id VARCHAR(100) NOT NULL,
+        sender_id VARCHAR(64) NOT NULL,
+        sender_name VARCHAR(255) NOT NULL,
+        target_id VARCHAR(64) NOT NULL,
+        content LONGTEXT NOT NULL,
+        msg_type VARCHAR(50) NOT NULL DEFAULT 'TEXT',
+        encrypted_content LONGTEXT DEFAULT NULL,
+        routing_trace TEXT DEFAULT NULL,
+        hop_count INT DEFAULT 0,
+        timestamp BIGINT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_sender_target (sender_id, target_id),
+        INDEX idx_timestamp (timestamp)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS shared_files (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        file_id VARCHAR(100) UNIQUE NOT NULL,
+        sender_id VARCHAR(64) NOT NULL,
+        sender_name VARCHAR(255) NOT NULL,
+        file_name VARCHAR(255) NOT NULL,
+        file_type VARCHAR(100) NOT NULL,
+        file_size VARCHAR(50) NOT NULL,
+        file_data LONGTEXT DEFAULT NULL,
+        uploaded_at BIGINT NOT NULL,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_sender_file (sender_id)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+    console.log("[Database] \u2705 All MySQL database tables initialized (users, chat_history, shared_files).");
+  } catch (err) {
+    console.error("[Database] \u274C Error creating tables:", err);
+  }
+}
+async function saveOrUpdateUser(user) {
+  if (!pool || !isConnected) return false;
+  try {
+    await pool.query(
+      `INSERT INTO users (code, name, phone, pin, profile_photo, registered_at)
+       VALUES (?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         name = VALUES(name),
+         phone = COALESCE(VALUES(phone), phone),
+         pin = VALUES(pin),
+         profile_photo = COALESCE(VALUES(profile_photo), profile_photo),
+         registered_at = VALUES(registered_at)`,
+      [
+        user.code,
+        user.name,
+        user.phone || null,
+        user.pin,
+        user.profile_photo || null,
+        user.registeredAt || Date.now()
+      ]
+    );
+    return true;
+  } catch (err) {
+    console.error("[Database] Save user failed:", err);
+    return false;
+  }
+}
+async function getAllUsers() {
+  const result = {};
+  if (!pool || !isConnected) return result;
+  try {
+    const [rows] = await pool.query("SELECT * FROM users");
+    if (Array.isArray(rows)) {
+      for (const row of rows) {
+        result[row.code] = {
+          code: row.code,
+          name: row.name,
+          phone: row.phone || void 0,
+          pin: row.pin,
+          profile_photo: row.profile_photo || void 0,
+          registeredAt: Number(row.registered_at)
+        };
+      }
+    }
+  } catch (err) {
+    console.error("[Database] Get all users failed:", err);
+  }
+  return result;
+}
+async function saveChatMessage(msg) {
+  if (!pool || !isConnected) return false;
+  try {
+    await pool.query(
+      `INSERT INTO chat_history (packet_id, sender_id, sender_name, target_id, content, msg_type, encrypted_content, routing_trace, hop_count, timestamp)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        msg.packetId,
+        msg.senderId,
+        msg.senderName,
+        msg.targetId,
+        msg.content,
+        msg.type,
+        msg.encryptedContent || null,
+        JSON.stringify(msg.routingTrace || []),
+        msg.hopCount || 0,
+        msg.timestamp
+      ]
+    );
+    return true;
+  } catch (err) {
+    console.error("[Database] Save chat message failed:", err);
+    return false;
+  }
+}
+async function getChatHistory(user1, user2, limit = 50) {
+  if (!pool || !isConnected) return [];
+  try {
+    let query = `SELECT * FROM chat_history`;
+    let params = [];
+    if (user1 && user2) {
+      query += ` WHERE (sender_id = ? AND target_id = ?) OR (sender_id = ? AND target_id = ?) OR target_id = 'BROADCAST'`;
+      params = [user1, user2, user2, user1];
+    } else if (user1) {
+      query += ` WHERE sender_id = ? OR target_id = ? OR target_id = 'BROADCAST'`;
+      params = [user1, user1];
+    }
+    query += ` ORDER BY timestamp DESC LIMIT ?`;
+    params.push(limit);
+    const [rows] = await pool.query(query, params);
+    if (Array.isArray(rows)) {
+      return rows.reverse().map((row) => ({
+        id: row.id,
+        packetId: row.packet_id,
+        senderId: row.sender_id,
+        senderName: row.sender_name,
+        targetId: row.target_id,
+        content: row.content,
+        type: row.msg_type,
+        encryptedContent: row.encrypted_content,
+        routingTrace: row.routing_trace ? JSON.parse(row.routing_trace) : [],
+        hopCount: row.hop_count,
+        timestamp: Number(row.timestamp)
+      }));
+    }
+  } catch (err) {
+    console.error("[Database] Get chat history failed:", err);
+  }
+  return [];
+}
+async function saveSharedFile(file) {
+  if (!pool || !isConnected) return false;
+  try {
+    await pool.query(
+      `INSERT INTO shared_files (file_id, sender_id, sender_name, file_name, file_type, file_size, file_data, uploaded_at)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+       ON DUPLICATE KEY UPDATE
+         file_name = VALUES(file_name),
+         file_size = VALUES(file_size),
+         file_data = VALUES(file_data)`,
+      [
+        file.fileId,
+        file.senderId,
+        file.senderName,
+        file.fileName,
+        file.fileType,
+        file.fileSize,
+        file.fileData || null,
+        file.uploadedAt || Date.now()
+      ]
+    );
+    return true;
+  } catch (err) {
+    console.error("[Database] Save shared file failed:", err);
+    return false;
+  }
+}
+async function getSharedFiles(senderId) {
+  if (!pool || !isConnected) return [];
+  try {
+    let query = `SELECT id, file_id, sender_id, sender_name, file_name, file_type, file_size, uploaded_at FROM shared_files`;
+    let params = [];
+    if (senderId) {
+      query += ` WHERE sender_id = ?`;
+      params.push(senderId);
+    }
+    query += ` ORDER BY uploaded_at DESC LIMIT 50`;
+    const [rows] = await pool.query(query, params);
+    if (Array.isArray(rows)) {
+      return rows.map((row) => ({
+        id: row.id,
+        fileId: row.file_id,
+        senderId: row.sender_id,
+        senderName: row.sender_name,
+        fileName: row.file_name,
+        fileType: row.file_type,
+        fileSize: row.file_size,
+        uploadedAt: Number(row.uploaded_at)
+      }));
+    }
+  } catch (err) {
+    console.error("[Database] Get shared files failed:", err);
+  }
+  return [];
+}
+function isDbConnected() {
+  return isConnected;
+}
+
+// server.ts
 var PORT = 3e3;
 var app = (0, import_express.default)();
-app.use(import_express.default.json({ limit: "10mb" }));
+app.use(import_express.default.json({ limit: "50mb" }));
 var DB_FILE_PATH = import_path.default.join(process.cwd(), "mesh_user_db.json");
 var userAccounts = {};
 try {
@@ -39,10 +295,10 @@ try {
     userAccounts = JSON.parse(raw);
   } else {
     userAccounts = {
-      "882910": { code: "882910", name: "\u09B0\u09B9\u09BF\u09AE \u0986\u09B9\u09AE\u09C7\u09A6", pin: "1234", registeredAt: Date.now() },
-      "123456": { code: "123456", name: "\u0986\u09B0\u09BF\u09AB \u09B9\u09BE\u09B8\u09BE\u09A8", pin: "1234", registeredAt: Date.now() },
-      "554433": { code: "554433", name: "\u09A4\u09BE\u09A8\u09AD\u09C0\u09B0 \u09B9\u09CB\u09B8\u09BE\u0987\u09A8", pin: "1234", registeredAt: Date.now() },
-      "998877": { code: "998877", name: "\u09A8\u09BE\u09B8\u09B0\u09BF\u09A8 \u0986\u0995\u09CD\u09A4\u09BE\u09B0", pin: "1234", registeredAt: Date.now() }
+      "882910": { code: "882910", name: "\u09B0\u09B9\u09BF\u09AE \u0986\u09B9\u09AE\u09C7\u09A6", phone: "01711000000", pin: "1234", registeredAt: Date.now() },
+      "123456": { code: "123456", name: "\u0986\u09B0\u09BF\u09AB \u09B9\u09BE\u09B8\u09BE\u09A8", phone: "01811000000", pin: "1234", registeredAt: Date.now() },
+      "554433": { code: "554433", name: "\u09A4\u09BE\u09A8\u09AD\u09C0\u09B0 \u09B9\u09CB\u09B8\u09BE\u0987\u09A8", phone: "01911000000", pin: "1234", registeredAt: Date.now() },
+      "998877": { code: "998877", name: "\u09A8\u09BE\u09B8\u09B0\u09BF\u09A8 \u0986\u0995\u09CD\u09A4\u09BE\u09B0", phone: "01611000000", pin: "1234", registeredAt: Date.now() }
     };
     import_fs.default.writeFileSync(DB_FILE_PATH, JSON.stringify(userAccounts, null, 2));
   }
@@ -293,6 +549,8 @@ wss.on("connection", (ws) => {
         const nodeId = data.nodeId || data.code;
         const name = data.name;
         const pin = data.pin;
+        const phone = data.phone;
+        const photo = data.profile_photo || data.photo;
         if (nodeId) {
           const existingAcc = userAccounts[nodeId];
           if (existingAcc && pin && existingAcc.pin !== pin) {
@@ -307,10 +565,20 @@ wss.on("connection", (ws) => {
           userAccounts[nodeId] = {
             code: nodeId,
             name: name || existingAcc?.name || `\u0987\u0989\u099C\u09BE\u09B0 (${nodeId})`,
+            phone: phone || existingAcc?.phone || "",
             pin: pin || existingAcc?.pin || "1234",
+            profile_photo: photo || existingAcc?.profile_photo,
             registeredAt: existingAcc?.registeredAt || Date.now()
           };
           saveUserDbToDisk();
+          saveOrUpdateUser({
+            code: nodeId,
+            name: userAccounts[nodeId].name,
+            phone: userAccounts[nodeId].phone,
+            pin: userAccounts[nodeId].pin,
+            profile_photo: userAccounts[nodeId].profile_photo,
+            registeredAt: userAccounts[nodeId].registeredAt
+          });
           const oldNodeId = clientNodeMap.get(ws);
           clientNodeMap.set(ws, nodeId);
           let matchedNode2 = meshNodes.find((n) => n.id === nodeId);
@@ -318,6 +586,7 @@ wss.on("connection", (ws) => {
             matchedNode2.status = "ONLINE";
             matchedNode2.lastSeen = Date.now();
             if (name) matchedNode2.name = name;
+            if (photo) matchedNode2.avatarUrl = photo;
           } else {
             matchedNode2 = {
               id: nodeId,
@@ -332,6 +601,7 @@ wss.on("connection", (ws) => {
               connectedPeers: ["node-relay-01", "node-relay-02"],
               publicKey: `MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A${nodeId}`,
               lastSeen: Date.now(),
+              avatarUrl: photo,
               ipAddress: `192.168.43.${Math.floor(Math.random() * 150) + 20}`
             };
             meshNodes.push(matchedNode2);
@@ -341,7 +611,8 @@ wss.on("connection", (ws) => {
             JSON.stringify({
               type: "AUTH_SUCCESS",
               code: nodeId,
-              name: userAccounts[nodeId].name
+              name: userAccounts[nodeId].name,
+              user: userAccounts[nodeId]
             })
           );
           if (oldNodeId && oldNodeId !== nodeId) {
@@ -360,6 +631,11 @@ wss.on("connection", (ws) => {
         const target = meshNodes.find((n) => n.id === id);
         if (target && name) {
           target.name = name;
+          if (userAccounts[id]) {
+            userAccounts[id].name = name;
+            saveUserDbToDisk();
+            saveOrUpdateUser(userAccounts[id]);
+          }
           broadcastToAllWs({ type: "TOPOLOGY_UPDATED", nodes: meshNodes, onlineCount: activeSockets.size });
         }
       } else if (data.type === "UPDATE_NODE_POSITION") {
@@ -401,6 +677,30 @@ wss.on("connection", (ws) => {
           packet.hopCount = 1;
         }
         meshPackets.push(packet);
+        saveChatMessage({
+          packetId: packet.id,
+          senderId: packet.senderId,
+          senderName: packet.senderName,
+          targetId: packet.targetId,
+          content: packet.encryptedPayload || "",
+          type: packet.fileName ? "FILE" : packet.type === "VOICE_MEMO" ? "VOICE" : packet.type === "EMERGENCY_SOS" ? "SOS" : "TEXT",
+          encryptedContent: packet.encryptedPayload,
+          routingTrace: packet.routingTrace,
+          hopCount: packet.hopCount,
+          timestamp: packet.timestamp || Date.now()
+        });
+        if (packet.fileName && packet.encryptedPayload) {
+          saveSharedFile({
+            fileId: packet.id,
+            senderId: packet.senderId,
+            senderName: packet.senderName,
+            fileName: packet.fileName,
+            fileType: "application/octet-stream",
+            fileSize: `${Math.round(packet.encryptedPayload.length * 0.75 / 1024)} KB`,
+            fileData: packet.encryptedPayload,
+            uploadedAt: packet.timestamp || Date.now()
+          });
+        }
         broadcastToAllWs({ type: "PACKET_RELAYED", packet, route });
       } else if (data.type === "EMERGENCY_SOS_BROADCAST") {
         const alert = data.alert;
@@ -454,7 +754,113 @@ app.post("/api/mesh/reset", (req, res) => {
   broadcastToAllWs({ type: "TOPOLOGY_UPDATED", nodes: meshNodes });
   res.json({ success: true, nodes: meshNodes });
 });
+app.get("/api/db/status", (req, res) => {
+  res.json({
+    connected: isDbConnected(),
+    databaseName: process.env.DB_NAME || "national_banglacallapp",
+    host: process.env.DB_HOST || "localhost",
+    userCount: Object.keys(userAccounts).length,
+    packetCount: meshPackets.length
+  });
+});
+app.get("/api/db/users", async (req, res) => {
+  try {
+    const dbUsers = await getAllUsers();
+    res.json({ success: true, users: dbUsers, localUsers: userAccounts });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+app.post("/api/db/users/update", async (req, res) => {
+  try {
+    const { code, name, phone, pin, profile_photo } = req.body;
+    if (!code) {
+      return res.status(400).json({ error: "User code is required" });
+    }
+    const existing = userAccounts[code] || { code, name: name || code, phone: phone || "", pin: pin || "1234", profile_photo: profile_photo || "", registeredAt: Date.now() };
+    const updated = {
+      code,
+      name: name || existing.name,
+      phone: phone || existing.phone,
+      pin: pin || existing.pin,
+      profile_photo: profile_photo || existing.profile_photo,
+      registeredAt: existing.registeredAt
+    };
+    userAccounts[code] = updated;
+    saveUserDbToDisk();
+    const matchedNode = meshNodes.find((n) => n.id === code);
+    if (matchedNode) {
+      matchedNode.name = updated.name;
+      if (updated.profile_photo) matchedNode.avatarUrl = updated.profile_photo;
+    }
+    const savedInDb = await saveOrUpdateUser({
+      code: updated.code,
+      name: updated.name,
+      phone: updated.phone,
+      pin: updated.pin,
+      profile_photo: updated.profile_photo,
+      registeredAt: updated.registeredAt
+    });
+    res.json({ success: true, user: updated, savedInDb });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+app.get("/api/db/chat", async (req, res) => {
+  try {
+    const user1 = req.query.user1;
+    const user2 = req.query.user2;
+    const history = await getChatHistory(user1, user2);
+    res.json({ success: true, history });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+app.get("/api/db/files", async (req, res) => {
+  try {
+    const senderId = req.query.senderId;
+    const files = await getSharedFiles(senderId);
+    res.json({ success: true, files });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+app.post("/api/db/files/upload", async (req, res) => {
+  try {
+    const { fileId, senderId, senderName, fileName, fileType, fileSize, fileData } = req.body;
+    if (!fileId || !senderId || !fileName) {
+      return res.status(400).json({ error: "fileId, senderId, and fileName are required" });
+    }
+    const record = {
+      fileId,
+      senderId,
+      senderName: senderName || senderId,
+      fileName,
+      fileType: fileType || "application/octet-stream",
+      fileSize: fileSize || "0 KB",
+      fileData,
+      uploadedAt: Date.now()
+    };
+    const saved = await saveSharedFile(record);
+    res.json({ success: true, saved, file: record });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
 async function startServer() {
+  console.log("[Server] Initializing MySQL Database...");
+  const dbConnected = await initDatabase();
+  if (dbConnected) {
+    try {
+      const dbUsers = await getAllUsers();
+      if (Object.keys(dbUsers).length > 0) {
+        userAccounts = { ...userAccounts, ...dbUsers };
+        saveUserDbToDisk();
+      }
+    } catch (e) {
+      console.error("[Server] Failed syncing initial DB users:", e);
+    }
+  }
   if (process.env.NODE_ENV !== "production") {
     const vite = await (0, import_vite.createServer)({
       server: { middlewareMode: true },
