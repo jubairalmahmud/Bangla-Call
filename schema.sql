@@ -47,8 +47,4 @@ CREATE TABLE IF NOT EXISTS shared_files (
   INDEX idx_sender_file (sender_id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
 
--- Sample Default Users
-INSERT INTO users (code, name, phone, pin, registered_at) VALUES
-('882910', 'রহিম আহমেদ', '01711000000', '1234', 1700000000000),
-('123456', 'আরিফ হাসান', '01811000000', '1234', 1700000000000)
-ON DUPLICATE KEY UPDATE name=VALUES(name);
+

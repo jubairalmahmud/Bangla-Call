@@ -42,13 +42,7 @@ try {
     const raw = fs.readFileSync(DB_FILE_PATH, 'utf-8');
     userAccounts = JSON.parse(raw);
   } else {
-    // Default Preset Users
-    userAccounts = {
-      '882910': { code: '882910', name: 'রহিম আহমেদ', phone: '01711000000', pin: '1234', registeredAt: Date.now() },
-      '123456': { code: '123456', name: 'আরিফ হাসান', phone: '01811000000', pin: '1234', registeredAt: Date.now() },
-      '554433': { code: '554433', name: 'তানভীর হোসাইন', phone: '01911000000', pin: '1234', registeredAt: Date.now() },
-      '998877': { code: '998877', name: 'নাসরিন আক্তার', phone: '01611000000', pin: '1234', registeredAt: Date.now() },
-    };
+    userAccounts = {};
     fs.writeFileSync(DB_FILE_PATH, JSON.stringify(userAccounts, null, 2));
   }
 } catch (e) {
@@ -67,72 +61,8 @@ function saveUserDbToDisk() {
 const server = http.createServer(app);
 const wss = new WebSocketServer({ server });
 
-// Initial Simulated Mesh Network State with 6-Digit User Codes
+// Initial Simulated Mesh Network State (Relay Infrastructure Nodes)
 let meshNodes: MeshNode[] = [
-  {
-    id: '882910',
-    name: 'রহিম আহমেদ',
-    type: 'MOBILE_USER',
-    status: 'ONLINE',
-    batteryLevel: 94,
-    x: 18,
-    y: 35,
-    signalRange: 35,
-    rssi: -45,
-    connectedPeers: ['node-relay-01', '123456'],
-    publicKey: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AuAlphaNodeKey2026',
-    lastSeen: Date.now(),
-    ipAddress: '192.168.43.10',
-    bluetoothMac: 'AA:BB:CC:11:22:33',
-  },
-  {
-    id: '123456',
-    name: 'আরিফ হাসান',
-    type: 'MOBILE_USER',
-    status: 'ONLINE',
-    batteryLevel: 85,
-    x: 35,
-    y: 70,
-    signalRange: 35,
-    rssi: -58,
-    connectedPeers: ['882910', 'node-relay-01', '554433'],
-    publicKey: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8ABravoPeerKey2026',
-    lastSeen: Date.now(),
-    ipAddress: '192.168.43.22',
-    bluetoothMac: 'AA:11:22:33:44:55',
-  },
-  {
-    id: '554433',
-    name: 'তানভীর হোসাইন',
-    type: 'MOBILE_USER',
-    status: 'ONLINE',
-    batteryLevel: 78,
-    x: 75,
-    y: 65,
-    signalRange: 35,
-    rssi: -65,
-    connectedPeers: ['123456', 'node-relay-02'],
-    publicKey: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AUCharliePeerKey2026',
-    lastSeen: Date.now(),
-    ipAddress: '192.168.43.33',
-    bluetoothMac: 'BB:CC:DD:77:88:99',
-  },
-  {
-    id: '998877',
-    name: 'নাসরিন আক্তার',
-    type: 'MOBILE_USER',
-    status: 'ONLINE',
-    batteryLevel: 91,
-    x: 82,
-    y: 25,
-    signalRange: 35,
-    rssi: -70,
-    connectedPeers: ['node-[#relay-02]'],
-    publicKey: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8ADeltaNodeKey2026',
-    lastSeen: Date.now(),
-    ipAddress: '192.168.43.44',
-    bluetoothMac: 'CC:DD:EE:88:99:00',
-  },
   {
     id: 'node-relay-01',
     name: 'রিলে টাওয়ার ১ (Relay Node 01)',
@@ -143,7 +73,7 @@ let meshNodes: MeshNode[] = [
     y: 25,
     signalRange: 45,
     rssi: -62,
-    connectedPeers: ['node-alpha-self', 'node-relay-02', 'node-bravo'],
+    connectedPeers: ['node-relay-02'],
     publicKey: 'MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQERelayTowerKey01',
     lastSeen: Date.now(),
     ipAddress: '192.168.43.1',

@@ -294,12 +294,7 @@ try {
     const raw = import_fs.default.readFileSync(DB_FILE_PATH, "utf-8");
     userAccounts = JSON.parse(raw);
   } else {
-    userAccounts = {
-      "882910": { code: "882910", name: "\u09B0\u09B9\u09BF\u09AE \u0986\u09B9\u09AE\u09C7\u09A6", phone: "01711000000", pin: "1234", registeredAt: Date.now() },
-      "123456": { code: "123456", name: "\u0986\u09B0\u09BF\u09AB \u09B9\u09BE\u09B8\u09BE\u09A8", phone: "01811000000", pin: "1234", registeredAt: Date.now() },
-      "554433": { code: "554433", name: "\u09A4\u09BE\u09A8\u09AD\u09C0\u09B0 \u09B9\u09CB\u09B8\u09BE\u0987\u09A8", phone: "01911000000", pin: "1234", registeredAt: Date.now() },
-      "998877": { code: "998877", name: "\u09A8\u09BE\u09B8\u09B0\u09BF\u09A8 \u0986\u0995\u09CD\u09A4\u09BE\u09B0", phone: "01611000000", pin: "1234", registeredAt: Date.now() }
-    };
+    userAccounts = {};
     import_fs.default.writeFileSync(DB_FILE_PATH, JSON.stringify(userAccounts, null, 2));
   }
 } catch (e) {
@@ -316,70 +311,6 @@ var server = import_http.default.createServer(app);
 var wss = new import_ws.WebSocketServer({ server });
 var meshNodes = [
   {
-    id: "882910",
-    name: "\u09B0\u09B9\u09BF\u09AE \u0986\u09B9\u09AE\u09C7\u09A6",
-    type: "MOBILE_USER",
-    status: "ONLINE",
-    batteryLevel: 94,
-    x: 18,
-    y: 35,
-    signalRange: 35,
-    rssi: -45,
-    connectedPeers: ["node-relay-01", "123456"],
-    publicKey: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AuAlphaNodeKey2026",
-    lastSeen: Date.now(),
-    ipAddress: "192.168.43.10",
-    bluetoothMac: "AA:BB:CC:11:22:33"
-  },
-  {
-    id: "123456",
-    name: "\u0986\u09B0\u09BF\u09AB \u09B9\u09BE\u09B8\u09BE\u09A8",
-    type: "MOBILE_USER",
-    status: "ONLINE",
-    batteryLevel: 85,
-    x: 35,
-    y: 70,
-    signalRange: 35,
-    rssi: -58,
-    connectedPeers: ["882910", "node-relay-01", "554433"],
-    publicKey: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8ABravoPeerKey2026",
-    lastSeen: Date.now(),
-    ipAddress: "192.168.43.22",
-    bluetoothMac: "AA:11:22:33:44:55"
-  },
-  {
-    id: "554433",
-    name: "\u09A4\u09BE\u09A8\u09AD\u09C0\u09B0 \u09B9\u09CB\u09B8\u09BE\u0987\u09A8",
-    type: "MOBILE_USER",
-    status: "ONLINE",
-    batteryLevel: 78,
-    x: 75,
-    y: 65,
-    signalRange: 35,
-    rssi: -65,
-    connectedPeers: ["123456", "node-relay-02"],
-    publicKey: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AUCharliePeerKey2026",
-    lastSeen: Date.now(),
-    ipAddress: "192.168.43.33",
-    bluetoothMac: "BB:CC:DD:77:88:99"
-  },
-  {
-    id: "998877",
-    name: "\u09A8\u09BE\u09B8\u09B0\u09BF\u09A8 \u0986\u0995\u09CD\u09A4\u09BE\u09B0",
-    type: "MOBILE_USER",
-    status: "ONLINE",
-    batteryLevel: 91,
-    x: 82,
-    y: 25,
-    signalRange: 35,
-    rssi: -70,
-    connectedPeers: ["node-[#relay-02]"],
-    publicKey: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8ADeltaNodeKey2026",
-    lastSeen: Date.now(),
-    ipAddress: "192.168.43.44",
-    bluetoothMac: "CC:DD:EE:88:99:00"
-  },
-  {
     id: "node-relay-01",
     name: "\u09B0\u09BF\u09B2\u09C7 \u099F\u09BE\u0993\u09AF\u09BC\u09BE\u09B0 \u09E7 (Relay Node 01)",
     type: "RELAY_TOWER",
@@ -389,7 +320,7 @@ var meshNodes = [
     y: 25,
     signalRange: 45,
     rssi: -62,
-    connectedPeers: ["node-alpha-self", "node-relay-02", "node-bravo"],
+    connectedPeers: ["node-relay-02"],
     publicKey: "MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQERelayTowerKey01",
     lastSeen: Date.now(),
     ipAddress: "192.168.43.1",
