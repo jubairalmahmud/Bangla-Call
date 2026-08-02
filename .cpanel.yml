@@ -1,7 +1,7 @@
 ---
 deployment:
   tasks:
-    - export DEPLOYPATH=/home/national/repositories/Bangla-Call
+    - export DEPLOYPATH=/home/national/banglacallapp.nit.bd
     - /bin/cp -R * $DEPLOYPATH
     - cd $DEPLOYPATH
     - npm install
