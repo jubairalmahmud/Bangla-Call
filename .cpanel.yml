@@ -4,4 +4,6 @@ deployment:
     - export DEPLOYPATH=/home/national/banglacallapp.nit.bd
     - /bin/cp -R * $DEPLOYPATH
     - cd $DEPLOYPATH
+    - /bin/cp dist/index.html index.html
+    - /bin/cp -R dist/assets . 2>/dev/null || true
     - npm install --production
