@@ -124,6 +124,18 @@ export default function App() {
   };
 
   const [authError, setAuthError] = useState<string>('');
+  const [incomingCall, setIncomingCall] = useState<{
+    callerId: string;
+    callerName: string;
+    targetId: string;
+    timestamp: number;
+  } | null>(null);
+
+  const [callSignalState, setCallSignalState] = useState<{
+    type: 'RINGING' | 'ACCEPTED' | 'REJECTED' | 'ENDED' | 'NONE';
+    targetId?: string;
+    callerId?: string;
+  }>({ type: 'NONE' });
 
   // Initialize WebSocket connection to backend
   useEffect(() => {
@@ -228,6 +240,27 @@ export default function App() {
             isSelf: alert.senderId === currentMyRole,
           };
           setMessages((prev) => [...prev, sosMsg]);
+        } else if (data.type === 'INCOMING_CALL') {
+          const currentMyRole = selectedSourceIdRef.current;
+          if (data.targetId === currentMyRole || data.targetId === 'BROADCAST') {
+            if (data.callerId !== currentMyRole) {
+              setIncomingCall({
+                callerId: data.callerId,
+                callerName: data.callerName,
+                targetId: data.targetId,
+                timestamp: data.timestamp,
+              });
+            }
+          }
+        } else if (data.type === 'CALL_ACCEPTED') {
+          setIncomingCall(null);
+          setCallSignalState({ type: 'ACCEPTED', callerId: data.callerId, targetId: data.targetId });
+        } else if (data.type === 'CALL_REJECTED') {
+          setIncomingCall(null);
+          setCallSignalState({ type: 'REJECTED', callerId: data.callerId, targetId: data.targetId });
+        } else if (data.type === 'CALL_ENDED') {
+          setIncomingCall(null);
+          setCallSignalState({ type: 'ENDED', callerId: data.callerId, targetId: data.targetId });
         } else if (data.type === 'VOICE_CHUNK_RECEIVED') {
           if (data.chunk) {
             const chunk = data.chunk;
@@ -506,6 +539,25 @@ export default function App() {
     }
   };
 
+  const handleSendCallSignal = (
+    action: 'INITIATE' | 'ACCEPT' | 'REJECT' | 'END',
+    targetId: string,
+    callerName?: string
+  ) => {
+    const currentSourceId = selectedSourceIdRef.current;
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      wsRef.current.send(
+        JSON.stringify({
+          type: 'VOICE_CALL_SIGNAL',
+          action,
+          callerId: currentSourceId,
+          callerName: callerName || currentSourceId,
+          targetId,
+        })
+      );
+    }
+  };
+
   const handleSendVoiceChunk = (chunk: {
     audioData?: string;
     mimeType?: string;
@@ -603,6 +655,10 @@ export default function App() {
             onOpenRelayDashboard={() => setViewMode('RELAY_NODE')}
             onRegisterUser={handleRegisterUser}
             authError={authError}
+            incomingCall={incomingCall}
+            callSignalState={callSignalState}
+            onSendCallSignal={handleSendCallSignal}
+            onSendVoiceChunk={handleSendVoiceChunk}
           />
         )}
 
@@ -614,6 +670,7 @@ export default function App() {
             lang={lang}
             onSwitchToSimple={() => setViewMode('SIMPLE_USER')}
             onSwitchToMaster={() => setViewMode('MASTER')}
+            onStartCall={(code) => handleSendCallSignal('INITIATE', code)}
           />
         )}
 

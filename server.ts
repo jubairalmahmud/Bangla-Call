@@ -467,6 +467,41 @@ wss.on('connection', (ws) => {
           senderName,
         };
         broadcastToOthersWs(ws, { type: 'VOICE_CHUNK_RECEIVED', chunk: chunkWithSender });
+      } else if (data.type === 'VOICE_CALL_SIGNAL') {
+        const { action, callerId, callerName, targetId } = data;
+        const callerNode = meshNodes.find((n) => n.id === callerId) || { name: callerName || callerId };
+        const targetNode = meshNodes.find((n) => n.id === targetId);
+
+        if (action === 'INITIATE') {
+          // Broadcast INCOMING_CALL signal to target user socket / mesh clients
+          broadcastToAllWs({
+            type: 'INCOMING_CALL',
+            callerId,
+            callerName: callerName || callerNode.name,
+            targetId,
+            timestamp: Date.now(),
+          });
+        } else if (action === 'ACCEPT') {
+          broadcastToAllWs({
+            type: 'CALL_ACCEPTED',
+            callerId,
+            targetId,
+            timestamp: Date.now(),
+          });
+        } else if (action === 'REJECT') {
+          broadcastToAllWs({
+            type: 'CALL_REJECTED',
+            callerId,
+            targetId,
+            reason: 'User declined call',
+          });
+        } else if (action === 'END') {
+          broadcastToAllWs({
+            type: 'CALL_ENDED',
+            callerId,
+            targetId,
+          });
+        }
       }
     } catch (err) {
       console.error('WS Error parsing message:', err);
@@ -493,7 +528,70 @@ wss.on('connection', (ws) => {
   });
 });
 
-// Express API Routes & Database Management
+function getAreaByCoordinates(x: number, y: number): string {
+  if (x < 40 && y < 40) return 'ঢাকা নর্থ (উত্তরা / গুলশান নোড)';
+  if (x >= 40 && x < 70 && y < 50) return 'ঢাকা সেন্ট্রাল (মিরপুর / ধানমন্ডি হাব)';
+  if (x >= 70 && y < 50) return 'চট্টগ্রাম ইস্ট রেঞ্জ';
+  if (y >= 50 && x < 50) return 'সিলেট ও কুমিল্লা মেস জোন';
+  return 'ঢাকা সাউথ (সদরঘাট / নারায়ণগঞ্জ কভারেজ)';
+}
+
+async function syncDbUsersToMeshNodes() {
+  try {
+    const dbUserMap = await getAllUsers();
+    const dbUsers = Object.values(dbUserMap);
+    if (dbUsers.length > 0) {
+      dbUsers.forEach((u) => {
+        userAccounts[u.code] = {
+          code: u.code,
+          name: u.name,
+          phone: u.phone || '',
+          pin: u.pin || '1234',
+          profile_photo: u.profile_photo || '',
+          registeredAt: u.registeredAt || Date.now(),
+        };
+
+        const isOnline = Array.from(clientNodeMap.values()).includes(u.code);
+        let matched = meshNodes.find((n) => n.id === u.code);
+        if (matched) {
+          matched.name = u.name;
+          matched.status = isOnline ? 'ONLINE' : 'OFFLINE';
+          if (u.profile_photo) matched.avatarUrl = u.profile_photo;
+          if (!matched.locationArea) {
+            matched.locationArea = getAreaByCoordinates(matched.x, matched.y);
+          }
+        } else {
+          const randX = Math.floor(Math.random() * 50) + 25;
+          const randY = Math.floor(Math.random() * 50) + 25;
+          meshNodes.push({
+            id: u.code,
+            name: u.name,
+            type: 'MOBILE_USER',
+            status: isOnline ? 'ONLINE' : 'OFFLINE',
+            batteryLevel: Math.floor(Math.random() * 30) + 70,
+            x: randX,
+            y: randY,
+            signalRange: 35,
+            rssi: -55,
+            connectedPeers: ['node-relay-01'],
+            publicKey: `MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A${u.code}`,
+            lastSeen: Date.now(),
+            avatarUrl: u.profile_photo,
+            locationArea: getAreaByCoordinates(randX, randY),
+          });
+        }
+      });
+      recalculateTopology();
+    }
+  } catch (err) {
+    console.error('Error syncing DB users to mesh nodes:', err);
+  }
+}
+
+// Initial DB Sync
+initDatabase().then(() => {
+  syncDbUsersToMeshNodes();
+}).catch((err) => console.error('DB Init error:', err));
 app.get('/api/mesh/nodes', (req, res) => {
   res.json({ status: 'ok', nodes: meshNodes });
 });

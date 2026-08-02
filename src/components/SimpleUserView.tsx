@@ -42,6 +42,10 @@ interface SimpleUserViewProps {
   onOpenRelayDashboard: () => void;
   onRegisterUser: (name: string, code: string, pin: string) => void;
   authError?: string;
+  incomingCall?: { callerId: string; callerName: string; targetId: string; timestamp: number } | null;
+  callSignalState?: { type: 'RINGING' | 'ACCEPTED' | 'REJECTED' | 'ENDED' | 'NONE'; targetId?: string; callerId?: string };
+  onSendCallSignal?: (action: 'INITIATE' | 'ACCEPT' | 'REJECT' | 'END', targetId: string, callerName?: string) => void;
+  onSendVoiceChunk?: (chunk: { audioData?: string; mimeType?: string; pcmData?: number[]; base64Pcm?: string; sampleRate?: number; senderName: string }) => void;
 }
 
 export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
@@ -55,6 +59,10 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
   onOpenRelayDashboard,
   onRegisterUser,
   authError,
+  incomingCall,
+  callSignalState,
+  onSendCallSignal,
+  onSendVoiceChunk,
 }) => {
   // Login / Registration state
   const [isLoggedIn, setIsLoggedIn] = useState<boolean>(() => {
@@ -181,6 +189,73 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
     setDialerNumber('');
   };
 
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const audioStreamRef = useRef<MediaStream | null>(null);
+
+  // Live Microphone audio streaming during active call
+  useEffect(() => {
+    if (activeCall.isActive && !activeCall.isMuted) {
+      navigator.mediaDevices?.getUserMedia({
+        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
+      }).then((stream) => {
+        audioStreamRef.current = stream;
+        try {
+          let mimeType = 'audio/webm;codecs=opus';
+          if (typeof MediaRecorder !== 'undefined') {
+            if (!MediaRecorder.isTypeSupported(mimeType)) {
+              if (MediaRecorder.isTypeSupported('audio/mp4')) mimeType = 'audio/mp4';
+              else if (MediaRecorder.isTypeSupported('audio/webm')) mimeType = 'audio/webm';
+              else mimeType = '';
+            }
+            if (mimeType) {
+              const mr = new MediaRecorder(stream, { mimeType });
+              mediaRecorderRef.current = mr;
+              mr.ondataavailable = (e) => {
+                if (e.data && e.data.size > 0 && onSendVoiceChunk) {
+                  const reader = new FileReader();
+                  reader.onloadend = () => {
+                    const base64Audio = reader.result as string;
+                    if (base64Audio) {
+                      onSendVoiceChunk({
+                        audioData: base64Audio,
+                        mimeType,
+                        senderName: inputName || myNodeId,
+                      });
+                    }
+                  };
+                  reader.readAsDataURL(e.data);
+                }
+              };
+              mr.start(350); // stream voice every 350ms
+            }
+          }
+        } catch (err) {
+          console.error('MediaRecorder error:', err);
+        }
+      }).catch((err) => {
+        console.warn('Microphone permission error:', err);
+      });
+    } else {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try { mediaRecorderRef.current.stop(); } catch (e) {}
+      }
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach((t) => t.stop());
+        audioStreamRef.current = null;
+      }
+    }
+
+    return () => {
+      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
+        try { mediaRecorderRef.current.stop(); } catch (e) {}
+      }
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach((t) => t.stop());
+        audioStreamRef.current = null;
+      }
+    };
+  }, [activeCall.isActive, activeCall.isMuted]);
+
   const handleStartCall = (targetCode: string, targetName?: string) => {
     const matchedNode = nodes.find((n) => n.id === targetCode);
     const matchedContact = contacts.find((c) => c.code === targetCode);
@@ -190,6 +265,8 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
       matchedContact?.name ||
       matchedNode?.name ||
       `ইউজার (${targetCode})`;
+
+    onSendCallSignal?.('INITIATE', targetCode, inputName || myNodeId);
 
     setActiveCall({
       isActive: true,
@@ -201,6 +278,9 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
   };
 
   const handleRejectOrCutCall = () => {
+    if (activeCall.targetCode) {
+      onSendCallSignal?.('END', activeCall.targetCode, inputName || myNodeId);
+    }
     setActiveCall({
       isActive: false,
       targetCode: '',
@@ -454,6 +534,60 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
           <span>💬 এসএমএস টেক্সট</span>
         </button>
       </div>
+
+      {/* INCOMING VOICE CALL RINGING MODAL */}
+      {incomingCall && !activeCall.isActive && (
+        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
+          <div className="bg-[#14161B] border-2 border-[#00FF9C] rounded-lg p-6 max-w-md w-full shadow-[0_0_50px_rgba(0,255,156,0.4)] text-center space-y-4">
+            <div className="w-16 h-16 bg-[#00FF9C]/20 border-2 border-[#00FF9C] rounded-full flex items-center justify-center mx-auto text-[#00FF9C] animate-pulse">
+              <PhoneCall className="w-8 h-8 animate-bounce" />
+            </div>
+            <div>
+              <span className="text-xs bg-[#00FF9C] text-black font-extrabold px-2.5 py-0.5 rounded uppercase tracking-wider">
+                📞 ইনকামিং অফ-গ্রিড ভয়েস কল...
+              </span>
+              <h3 className="text-2xl font-extrabold text-white mt-2">
+                {incomingCall.callerName}
+              </h3>
+              <p className="text-sm text-[#00FF9C] font-mono font-bold mt-1">
+                ৬-ডিজিটের ফোন কোড: [{incomingCall.callerId}]
+              </p>
+              <p className="text-xs text-[#8A909D] mt-1">
+                আপনাকে সরাসরি মেস ভয়েস কল দিচ্ছেন। কল রিসিভ করতে সবুজ বাটনে চাপুন।
+              </p>
+            </div>
+
+            <div className="flex gap-4 pt-2">
+              <button
+                onClick={() => {
+                  onSendCallSignal?.('ACCEPT', incomingCall.callerId, inputName || myNodeId);
+                  setActiveCall({
+                    isActive: true,
+                    targetCode: incomingCall.callerId,
+                    targetName: incomingCall.callerName,
+                    durationSec: 0,
+                    isMuted: false,
+                  });
+                }}
+                className="flex-1 py-3.5 bg-[#00FF9C] hover:bg-[#00FF9C]/90 text-black font-extrabold text-sm uppercase rounded flex items-center justify-center gap-2 cursor-pointer shadow-xl transition-all"
+              >
+                <Phone className="w-5 h-5" />
+                <span>কল রিসিভ করুন</span>
+              </button>
+
+              <button
+                onClick={() => {
+                  onSendCallSignal?.('REJECT', incomingCall.callerId, inputName || myNodeId);
+                }}
+                className="flex-1 py-3.5 bg-rose-600 hover:bg-rose-500 text-white font-extrabold text-sm uppercase rounded flex items-center justify-center gap-2 cursor-pointer shadow-xl transition-all"
+              >
+                <PhoneOff className="w-5 h-5" />
+                <span>রিজেক্ট করুন</span>
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {/* ACTIVE VOICE CALL BANNER */}
       {activeCall.isActive && (

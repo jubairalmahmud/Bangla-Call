@@ -647,6 +647,39 @@ wss.on("connection", (ws) => {
           senderName
         };
         broadcastToOthersWs(ws, { type: "VOICE_CHUNK_RECEIVED", chunk: chunkWithSender });
+      } else if (data.type === "VOICE_CALL_SIGNAL") {
+        const { action, callerId, callerName, targetId } = data;
+        const callerNode = meshNodes.find((n) => n.id === callerId) || { name: callerName || callerId };
+        const targetNode = meshNodes.find((n) => n.id === targetId);
+        if (action === "INITIATE") {
+          broadcastToAllWs({
+            type: "INCOMING_CALL",
+            callerId,
+            callerName: callerName || callerNode.name,
+            targetId,
+            timestamp: Date.now()
+          });
+        } else if (action === "ACCEPT") {
+          broadcastToAllWs({
+            type: "CALL_ACCEPTED",
+            callerId,
+            targetId,
+            timestamp: Date.now()
+          });
+        } else if (action === "REJECT") {
+          broadcastToAllWs({
+            type: "CALL_REJECTED",
+            callerId,
+            targetId,
+            reason: "User declined call"
+          });
+        } else if (action === "END") {
+          broadcastToAllWs({
+            type: "CALL_ENDED",
+            callerId,
+            targetId
+          });
+        }
       }
     } catch (err) {
       console.error("WS Error parsing message:", err);
@@ -668,6 +701,66 @@ wss.on("connection", (ws) => {
     broadcastToAllWs({ type: "TOPOLOGY_UPDATED", nodes: meshNodes, onlineCount: activeSockets.size });
   });
 });
+function getAreaByCoordinates(x, y) {
+  if (x < 40 && y < 40) return "\u09A2\u09BE\u0995\u09BE \u09A8\u09B0\u09CD\u09A5 (\u0989\u09A4\u09CD\u09A4\u09B0\u09BE / \u0997\u09C1\u09B2\u09B6\u09BE\u09A8 \u09A8\u09CB\u09A1)";
+  if (x >= 40 && x < 70 && y < 50) return "\u09A2\u09BE\u0995\u09BE \u09B8\u09C7\u09A8\u09CD\u099F\u09CD\u09B0\u09BE\u09B2 (\u09AE\u09BF\u09B0\u09AA\u09C1\u09B0 / \u09A7\u09BE\u09A8\u09AE\u09A8\u09CD\u09A1\u09BF \u09B9\u09BE\u09AC)";
+  if (x >= 70 && y < 50) return "\u099A\u099F\u09CD\u099F\u0997\u09CD\u09B0\u09BE\u09AE \u0987\u09B8\u09CD\u099F \u09B0\u09C7\u099E\u09CD\u099C";
+  if (y >= 50 && x < 50) return "\u09B8\u09BF\u09B2\u09C7\u099F \u0993 \u0995\u09C1\u09AE\u09BF\u09B2\u09CD\u09B2\u09BE \u09AE\u09C7\u09B8 \u099C\u09CB\u09A8";
+  return "\u09A2\u09BE\u0995\u09BE \u09B8\u09BE\u0989\u09A5 (\u09B8\u09A6\u09B0\u0998\u09BE\u099F / \u09A8\u09BE\u09B0\u09BE\u09DF\u09A3\u0997\u099E\u09CD\u099C \u0995\u09AD\u09BE\u09B0\u09C7\u099C)";
+}
+async function syncDbUsersToMeshNodes() {
+  try {
+    const dbUserMap = await getAllUsers();
+    const dbUsers = Object.values(dbUserMap);
+    if (dbUsers.length > 0) {
+      dbUsers.forEach((u) => {
+        userAccounts[u.code] = {
+          code: u.code,
+          name: u.name,
+          phone: u.phone || "",
+          pin: u.pin || "1234",
+          profile_photo: u.profile_photo || "",
+          registeredAt: u.registeredAt || Date.now()
+        };
+        const isOnline = Array.from(clientNodeMap.values()).includes(u.code);
+        let matched = meshNodes.find((n) => n.id === u.code);
+        if (matched) {
+          matched.name = u.name;
+          matched.status = isOnline ? "ONLINE" : "OFFLINE";
+          if (u.profile_photo) matched.avatarUrl = u.profile_photo;
+          if (!matched.locationArea) {
+            matched.locationArea = getAreaByCoordinates(matched.x, matched.y);
+          }
+        } else {
+          const randX = Math.floor(Math.random() * 50) + 25;
+          const randY = Math.floor(Math.random() * 50) + 25;
+          meshNodes.push({
+            id: u.code,
+            name: u.name,
+            type: "MOBILE_USER",
+            status: isOnline ? "ONLINE" : "OFFLINE",
+            batteryLevel: Math.floor(Math.random() * 30) + 70,
+            x: randX,
+            y: randY,
+            signalRange: 35,
+            rssi: -55,
+            connectedPeers: ["node-relay-01"],
+            publicKey: `MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8A${u.code}`,
+            lastSeen: Date.now(),
+            avatarUrl: u.profile_photo,
+            locationArea: getAreaByCoordinates(randX, randY)
+          });
+        }
+      });
+      recalculateTopology();
+    }
+  } catch (err) {
+    console.error("Error syncing DB users to mesh nodes:", err);
+  }
+}
+initDatabase().then(() => {
+  syncDbUsersToMeshNodes();
+}).catch((err) => console.error("DB Init error:", err));
 app.get("/api/mesh/nodes", (req, res) => {
   res.json({ status: "ok", nodes: meshNodes });
 });

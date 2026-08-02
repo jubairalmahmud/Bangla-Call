@@ -27,6 +27,7 @@ interface RelayDashboardProps {
   lang: LanguageMode;
   onSwitchToSimple: () => void;
   onSwitchToMaster: () => void;
+  onStartCall?: (targetCode: string, targetName: string) => void;
 }
 
 export const RelayDashboard: React.FC<RelayDashboardProps> = ({
@@ -36,6 +37,7 @@ export const RelayDashboard: React.FC<RelayDashboardProps> = ({
   lang,
   onSwitchToSimple,
   onSwitchToMaster,
+  onStartCall,
 }) => {
   const [isRelayActive, setIsRelayActive] = useState<boolean>(true);
   const [stationName, setStationName] = useState<string>('OffGrid-Relay-Station-Alpha');
@@ -208,6 +210,103 @@ export const RelayDashboard: React.FC<RelayDashboardProps> = ({
           <p className="text-[10px] text-[#8A909D]">
             BLE 5.3 Low Energy Radio Mode: প্রতি ঘণ্টায় মাত্র ২% চার্জ গ্রহণ।
           </p>
+        </div>
+      </div>
+
+      {/* MASTER CONTROL: REGISTERED USERS & AREA TRACKER PANEL */}
+      <div className="bg-[#14161B] border-2 border-cyan-500/80 p-5 shadow-2xl space-y-4 rounded">
+        <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-3 border-b border-[#2D3139] pb-3">
+          <div className="flex items-center gap-3">
+            <div className="w-10 h-10 bg-cyan-500/20 border border-cyan-400 rounded flex items-center justify-center text-cyan-400 font-extrabold">
+              <Users className="w-5 h-5" />
+            </div>
+            <div>
+              <h3 className="text-base font-extrabold text-white uppercase tracking-wide flex items-center gap-2">
+                <span>📊 মাস্টার কন্ট্রোল: নিবন্ধিত ইউজার ও কভারেজ এরিয়া তালিকা</span>
+              </h3>
+              <p className="text-xs text-[#8A909D]">
+                ডিবিতে থাকা সমস্ত ইউজার, তাদের অবস্থান/এরিয়া এবং কভারেজ স্ট্যাটাস সরাসরি দেখুন।
+              </p>
+            </div>
+          </div>
+
+          <div className="flex items-center gap-2 text-xs font-mono">
+            <span className="bg-[#0E1014] border border-[#2D3139] px-2.5 py-1 rounded text-cyan-400 font-bold">
+              মোট ইউজার: {nodes.filter((n) => n.type === 'MOBILE_USER').length}
+            </span>
+            <span className="bg-[#00FF9C]/10 border border-[#00FF9C]/40 px-2.5 py-1 rounded text-[#00FF9C] font-bold">
+              অনলাইন: {nodes.filter((n) => n.type === 'MOBILE_USER' && n.status === 'ONLINE').length}
+            </span>
+          </div>
+        </div>
+
+        {/* User Nodes Location Table */}
+        <div className="overflow-x-auto">
+          <table className="w-full text-left text-xs font-mono">
+            <thead>
+              <tr className="bg-[#0E1014] text-[#8A909D] uppercase border-b border-[#2D3139]">
+                <th className="p-2.5">ইউজার নাম ও ফোন কোড</th>
+                <th className="p-2.5">অবস্থান / নেটওয়ার্ক এরিয়া</th>
+                <th className="p-2.5">কভারেজ স্ট্যাটাস</th>
+                <th className="p-2.5">সংকেত / ব্যাটারি</th>
+                <th className="p-2.5 text-right">মাস্টার অ্যাকশন</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-[#2D3139]">
+              {nodes
+                .filter((n) => n.type === 'MOBILE_USER')
+                .map((userNode) => {
+                  const isOnline = userNode.status === 'ONLINE';
+                  return (
+                    <tr key={userNode.id} className="hover:bg-[#1A1D24] transition-colors">
+                      <td className="p-2.5">
+                        <div className="font-extrabold text-white flex items-center gap-1.5">
+                          <Smartphone className="w-4 h-4 text-cyan-400" />
+                          <span>{userNode.name}</span>
+                        </div>
+                        <span className="text-[10px] text-cyan-400 font-mono">
+                          [{userNode.id}]
+                        </span>
+                      </td>
+
+                      <td className="p-2.5 font-bold text-amber-300">
+                        📍 {userNode.locationArea || 'ঢাকা সেন্ট্রাল (মিরপুর / ধানমন্ডি হাব)'}
+                      </td>
+
+                      <td className="p-2.5">
+                        {isOnline ? (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-[#00FF9C]/20 text-[#00FF9C] border border-[#00FF9C]/40 font-extrabold text-[10px]">
+                            <span className="w-2 h-2 rounded-full bg-[#00FF9C] animate-ping" />
+                            🟢 নেটওয়ার্কের আওতায়
+                          </span>
+                        ) : (
+                          <span className="inline-flex items-center gap-1 px-2 py-0.5 rounded bg-rose-950/60 text-rose-300 border border-rose-800 font-bold text-[10px]">
+                            🔴 অফলাইন (নেটওয়ার্কের বাহিরে)
+                          </span>
+                        )}
+                      </td>
+
+                      <td className="p-2.5 text-[#8A909D]">
+                        <div>RSSI: <span className="text-white font-bold">{userNode.rssi || -55} dBm</span></div>
+                        <div>🔋 {userNode.batteryLevel || 88}%</div>
+                      </td>
+
+                      <td className="p-2.5 text-right">
+                        {onStartCall && (
+                          <button
+                            onClick={() => onStartCall(userNode.id, userNode.name)}
+                            className="px-3 py-1 bg-cyan-500 hover:bg-cyan-400 text-black font-extrabold text-[11px] uppercase rounded inline-flex items-center gap-1 cursor-pointer transition-all shadow-md"
+                          >
+                            <PhoneCall className="w-3.5 h-3.5" />
+                            <span>ডাইরেক্ট কল</span>
+                          </button>
+                        )}
+                      </td>
+                    </tr>
+                  );
+                })}
+            </tbody>
+          </table>
         </div>
       </div>
 

@@ -21,6 +21,7 @@ export interface MeshNode {
   avatarUrl?: string;
   ipAddress?: string;
   bluetoothMac?: string;
+  locationArea?: string;
 }
 
 export interface MeshLink {
