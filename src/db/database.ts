@@ -1,7 +1,7 @@
 import mysql from 'mysql2/promise';
 
 // Default configuration with cPanel credentials fallback
-const DB_HOST = process.env.DB_HOST || 'localhost';
+const DB_HOST = process.env.DB_HOST || 's3378.usc1.stableserver.net';
 const DB_USER = process.env.DB_USER || 'national_banglacallapp';
 const DB_PASSWORD = process.env.DB_PASSWORD || 'Banglacallapp@2026';
 const DB_NAME = process.env.DB_NAME || 'national_banglacallapp';
