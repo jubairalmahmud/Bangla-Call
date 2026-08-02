@@ -294,7 +294,7 @@ export const RelayDashboard: React.FC<RelayDashboardProps> = ({
                       <td className="p-2.5 text-right">
                         {onStartCall && (
                           <button
-                            onClick={() => onStartCall(userNode.id, userNode.name)}
+                            onClick={() => onStartCall(userNode.code || userNode.id, userNode.name)}
                             className="px-3 py-1 bg-cyan-500 hover:bg-cyan-400 text-black font-extrabold text-[11px] uppercase rounded inline-flex items-center gap-1 cursor-pointer transition-all shadow-md"
                           >
                             <PhoneCall className="w-3.5 h-3.5" />

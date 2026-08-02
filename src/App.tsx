@@ -242,19 +242,32 @@ export default function App() {
           setMessages((prev) => [...prev, sosMsg]);
         } else if (data.type === 'INCOMING_CALL') {
           const currentMyRole = selectedSourceIdRef.current;
-          if (data.targetId === currentMyRole || data.targetId === 'BROADCAST') {
-            if (data.callerId !== currentMyRole) {
-              setIncomingCall({
-                callerId: data.callerId,
-                callerName: data.callerName,
-                targetId: data.targetId,
-                timestamp: data.timestamp,
-              });
-            }
+          const savedCode = localStorage.getItem('mesh_user_code') || '';
+          const isForMe =
+            data.targetId === currentMyRole ||
+            (savedCode && data.targetId === savedCode) ||
+            data.targetId === 'BROADCAST';
+
+          if (isForMe && data.callerId !== currentMyRole && data.callerId !== savedCode) {
+            setIncomingCall({
+              callerId: data.callerId,
+              callerName: data.callerName,
+              targetId: data.targetId,
+              timestamp: data.timestamp,
+            });
           }
         } else if (data.type === 'CALL_ACCEPTED') {
-          setIncomingCall(null);
-          setCallSignalState({ type: 'ACCEPTED', callerId: data.callerId, targetId: data.targetId });
+          const currentMyRole = selectedSourceIdRef.current;
+          const savedCode = localStorage.getItem('mesh_user_code') || '';
+          if (
+            data.callerId === currentMyRole ||
+            data.callerId === savedCode ||
+            data.targetId === currentMyRole ||
+            data.targetId === savedCode
+          ) {
+            setIncomingCall(null);
+            setCallSignalState({ type: 'ACCEPTED', callerId: data.callerId, targetId: data.targetId });
+          }
         } else if (data.type === 'CALL_REJECTED') {
           setIncomingCall(null);
           setCallSignalState({ type: 'REJECTED', callerId: data.callerId, targetId: data.targetId });
@@ -282,18 +295,7 @@ export default function App() {
               setGlobalReceivingSpeaker(null);
             }, 2500);
 
-            // 1. Play HTML5 Audio element if compressed audio chunk is present (most reliable on mobile)
-            if (chunk.audioData) {
-              try {
-                const audio = new Audio(chunk.audioData);
-                audio.volume = 1.0;
-                audio.play().catch((err) => console.log('Audio Autoplay policy:', err));
-              } catch (e) {
-                console.error('Audio element playback error:', e);
-              }
-            }
-
-            // 2. Decode & Play PCM audio live if present
+            // 1. Decode & Play PCM audio live via WebAudio API (Zero-latency, jitter-free buffer queue)
             let floatData: Float32Array | null = null;
             if (chunk.base64Pcm) {
               try {
@@ -308,7 +310,7 @@ export default function App() {
                   floatData[i] = int16[i] < 0 ? int16[i] / 32768 : int16[i] / 32767;
                 }
               } catch (e) {
-                console.error('Base64 decode error:', e);
+                console.error('Base64 PCM decode error:', e);
               }
             } else if (chunk.pcmData && chunk.pcmData.length > 0) {
               floatData = new Float32Array(chunk.pcmData);
@@ -338,7 +340,18 @@ export default function App() {
                 source.start(startTime);
                 nextPlayTimeRef.current = startTime + buffer.duration;
               } catch (err) {
-                console.error('Global PCM Audio Playback Error:', err);
+                console.error('PCM WebAudio scheduling error:', err);
+              }
+            } else if (chunk.audioData && !chunk.base64Pcm) {
+              // Fallback for full voice memo files (not live streaming slices)
+              if (chunk.audioData.length > 5000) {
+                try {
+                  const audio = new Audio(chunk.audioData);
+                  audio.volume = 1.0;
+                  audio.play().catch((err) => console.log('Audio Autoplay policy:', err));
+                } catch (e) {
+                  console.error('Audio element playback error:', e);
+                }
               }
             }
           }

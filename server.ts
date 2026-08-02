@@ -318,6 +318,14 @@ wss.on('connection', (ws) => {
           const oldNodeId = clientNodeMap.get(ws);
           clientNodeMap.set(ws, nodeId);
 
+          // Re-map candidate node ID (e.g. node-bravo -> 223344) to prevent target mismatch
+          if (oldNodeId && oldNodeId !== nodeId) {
+            const oldNode = meshNodes.find((n) => n.id === oldNodeId);
+            if (oldNode) {
+              oldNode.id = nodeId;
+            }
+          }
+
           let matchedNode = meshNodes.find((n) => n.id === nodeId);
           if (matchedNode) {
             matchedNode.status = 'ONLINE';

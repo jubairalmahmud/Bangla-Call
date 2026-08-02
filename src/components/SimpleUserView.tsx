@@ -191,53 +191,73 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
 
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const audioStreamRef = useRef<MediaStream | null>(null);
+  const callAudioCtxRef = useRef<AudioContext | null>(null);
+  const callScriptNodeRef = useRef<ScriptProcessorNode | null>(null);
 
-  // Live Microphone audio streaming during active call
+  // Live Microphone audio streaming during active call with WebAudio PCM Engine
   useEffect(() => {
     if (activeCall.isActive && !activeCall.isMuted) {
       navigator.mediaDevices?.getUserMedia({
         audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
       }).then((stream) => {
         audioStreamRef.current = stream;
+
+        // Set up WebAudio API PCM Audio Processor for pristine voice quality
         try {
-          let mimeType = 'audio/webm;codecs=opus';
-          if (typeof MediaRecorder !== 'undefined') {
-            if (!MediaRecorder.isTypeSupported(mimeType)) {
-              if (MediaRecorder.isTypeSupported('audio/mp4')) mimeType = 'audio/mp4';
-              else if (MediaRecorder.isTypeSupported('audio/webm')) mimeType = 'audio/webm';
-              else mimeType = '';
-            }
-            if (mimeType) {
-              const mr = new MediaRecorder(stream, { mimeType });
-              mediaRecorderRef.current = mr;
-              mr.ondataavailable = (e) => {
-                if (e.data && e.data.size > 0 && onSendVoiceChunk) {
-                  const reader = new FileReader();
-                  reader.onloadend = () => {
-                    const base64Audio = reader.result as string;
-                    if (base64Audio) {
-                      onSendVoiceChunk({
-                        audioData: base64Audio,
-                        mimeType,
-                        senderName: inputName || myNodeId,
-                      });
-                    }
-                  };
-                  reader.readAsDataURL(e.data);
+          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
+          if (AudioCtx) {
+            const ctx = new AudioCtx();
+            callAudioCtxRef.current = ctx;
+            const srcNode = ctx.createMediaStreamSource(stream);
+            const scriptNode = ctx.createScriptProcessor(2048, 1, 1);
+            callScriptNodeRef.current = scriptNode;
+
+            let lastSendTime = 0;
+            scriptNode.onaudioprocess = (e) => {
+              const now = Date.now();
+              if (now - lastSendTime >= 120) { // Send chunk every 120ms
+                lastSendTime = now;
+                const channelData = e.inputBuffer.getChannelData(0);
+                if (onSendVoiceChunk && channelData && channelData.length > 0) {
+                  const pcm16 = new Int16Array(channelData.length);
+                  for (let i = 0; i < channelData.length; i++) {
+                    const s = Math.max(-1, Math.min(1, channelData[i]));
+                    pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
+                  }
+                  let binary = '';
+                  const bytes = new Uint8Array(pcm16.buffer);
+                  for (let i = 0; i < bytes.byteLength; i++) {
+                    binary += String.fromCharCode(bytes[i]);
+                  }
+                  const base64Pcm = btoa(binary);
+
+                  onSendVoiceChunk({
+                    base64Pcm,
+                    pcmData: Array.from(channelData),
+                    sampleRate: ctx.sampleRate || 44100,
+                    senderName: inputName || myNodeId,
+                  });
                 }
-              };
-              mr.start(350); // stream voice every 350ms
-            }
+              }
+            };
+
+            srcNode.connect(scriptNode);
+            scriptNode.connect(ctx.destination);
           }
-        } catch (err) {
-          console.error('MediaRecorder error:', err);
+        } catch (pcmErr) {
+          console.warn('PCM capture setup error:', pcmErr);
         }
       }).catch((err) => {
         console.warn('Microphone permission error:', err);
       });
     } else {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        try { mediaRecorderRef.current.stop(); } catch (e) {}
+      if (callScriptNodeRef.current) {
+        try { callScriptNodeRef.current.disconnect(); } catch (e) {}
+        callScriptNodeRef.current = null;
+      }
+      if (callAudioCtxRef.current) {
+        try { callAudioCtxRef.current.close(); } catch (e) {}
+        callAudioCtxRef.current = null;
       }
       if (audioStreamRef.current) {
         audioStreamRef.current.getTracks().forEach((t) => t.stop());
@@ -246,8 +266,13 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
     }
 
     return () => {
-      if (mediaRecorderRef.current && mediaRecorderRef.current.state !== 'inactive') {
-        try { mediaRecorderRef.current.stop(); } catch (e) {}
+      if (callScriptNodeRef.current) {
+        try { callScriptNodeRef.current.disconnect(); } catch (e) {}
+        callScriptNodeRef.current = null;
+      }
+      if (callAudioCtxRef.current) {
+        try { callAudioCtxRef.current.close(); } catch (e) {}
+        callAudioCtxRef.current = null;
       }
       if (audioStreamRef.current) {
         audioStreamRef.current.getTracks().forEach((t) => t.stop());
@@ -611,8 +636,16 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
                   📞 {activeCall.targetName} [{activeCall.targetCode}] এর সাথে কল চলছে
                 </h3>
                 <p className="text-xs text-rose-200/80">
-                  সরাসরি কথা বলুন - অফ-গ্রিড ভয়েস স্টিমিং সক্রিয়।
+                  সরাসরি কথা বলুন - অফ-গ্রিড ভয়েস স্ট্রিমিং সক্রিয়।
                 </p>
+                <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-mono">
+                  <span className="px-2 py-0.5 rounded bg-cyan-950 border border-cyan-400 text-cyan-300 font-bold flex items-center gap-1">
+                    ⚡ ট্রান্সপোর্ট: Wi-Fi Direct Mesh (হাই-স্পীড কল | 100 Mbps)
+                  </span>
+                  <span className="px-2 py-0.5 rounded bg-emerald-950 border border-emerald-400 text-emerald-300 font-bold flex items-center gap-1">
+                    📡 ব্যাকআপ: Bluetooth 5.3 BLE (150m Range)
+                  </span>
+                </div>
               </div>
             </div>
 

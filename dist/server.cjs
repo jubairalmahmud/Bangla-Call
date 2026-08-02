@@ -512,6 +512,12 @@ wss.on("connection", (ws) => {
           });
           const oldNodeId = clientNodeMap.get(ws);
           clientNodeMap.set(ws, nodeId);
+          if (oldNodeId && oldNodeId !== nodeId) {
+            const oldNode = meshNodes.find((n) => n.id === oldNodeId);
+            if (oldNode) {
+              oldNode.id = nodeId;
+            }
+          }
           let matchedNode2 = meshNodes.find((n) => n.id === nodeId);
           if (matchedNode2) {
             matchedNode2.status = "ONLINE";
