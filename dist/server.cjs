@@ -32,7 +32,7 @@ var import_vite = require("vite");
 // src/db/database.ts
 var import_promise = __toESM(require("mysql2/promise"), 1);
 var DB_HOST = process.env.DB_HOST || "localhost";
-var DB_USER = process.env.DB_USER || "national_banglacall";
+var DB_USER = process.env.DB_USER || "national_banglacallapp";
 var DB_PASSWORD = process.env.DB_PASSWORD || "Banglacallapp@2026";
 var DB_NAME = process.env.DB_NAME || "national_banglacallapp";
 var DB_PORT = Number(process.env.DB_PORT) || 3306;
