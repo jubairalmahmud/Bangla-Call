@@ -89,12 +89,7 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
         // fallback
       }
     }
-    return [
-      { id: '1', name: 'রহিম আহমেদ', code: '882910' },
-      { id: '2', name: 'আরিফ হাসান', code: '123456' },
-      { id: '3', name: 'তানভীর হোসাইন', code: '554433' },
-      { id: '4', name: 'নাসরিন আক্তার', code: '998877' },
-    ];
+    return [];
   });
 
   const [newContactName, setNewContactName] = useState<string>('');

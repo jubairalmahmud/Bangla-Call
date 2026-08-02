@@ -154,7 +154,7 @@ export default function App() {
           const urlParams = new URLSearchParams(window.location.search);
           const roleParam = urlParams.get('role');
           const savedRole = sessionStorage.getItem('my_mesh_node_id');
-          const myRole = roleParam || savedCode || savedRole || data.assignedNodeId || '882910';
+          const myRole = roleParam || savedCode || savedRole || data.assignedNodeId || '';
 
           setSelectedSourceId(myRole);
           selectedSourceIdRef.current = myRole;
