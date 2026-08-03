@@ -73,6 +73,7 @@ export async function initDatabase() {
       waitForConnections: true,
       connectionLimit: 10,
       queueLimit: 0,
+      connectTimeout: 3000,
     });
 
     // Test connection

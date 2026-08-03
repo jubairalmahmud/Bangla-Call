@@ -50,7 +50,8 @@ async function initDatabase() {
       port: DB_PORT,
       waitForConnections: true,
       connectionLimit: 10,
-      queueLimit: 0
+      queueLimit: 0,
+      connectTimeout: 3e3
     });
     const connection = await pool.getConnection();
     console.log(`[Database] \u2705 MySQL Database Connected Successfully!`);
@@ -1163,19 +1164,6 @@ app.post("/api/calls/log", async (req, res) => {
   }
 });
 async function startServer() {
-  console.log("[Server] Initializing MySQL Database...");
-  const dbConnected = await initDatabase();
-  if (dbConnected) {
-    try {
-      const dbUsers = await getAllUsers();
-      if (Object.keys(dbUsers).length > 0) {
-        userAccounts = { ...userAccounts, ...dbUsers };
-        saveUserDbToDisk();
-      }
-    } catch (e) {
-      console.error("[Server] Failed syncing initial DB users:", e);
-    }
-  }
   if (process.env.NODE_ENV !== "production") {
     const vite = await (0, import_vite.createServer)({
       server: { middlewareMode: true },
@@ -1192,6 +1180,21 @@ async function startServer() {
   server.listen(PORT, "0.0.0.0", () => {
     console.log(`[MeshTalk] Server running on http://localhost:${PORT}`);
   });
+  (async () => {
+    console.log("[Server] Initializing MySQL Database...");
+    const dbConnected = await initDatabase();
+    if (dbConnected) {
+      try {
+        const dbUsers = await getAllUsers();
+        if (Object.keys(dbUsers).length > 0) {
+          userAccounts = { ...userAccounts, ...dbUsers };
+          saveUserDbToDisk();
+        }
+      } catch (e) {
+        console.error("[Server] Failed syncing initial DB users:", e);
+      }
+    }
+  })();
 }
 startServer();
 //# sourceMappingURL=server.cjs.map

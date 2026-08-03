@@ -4,7 +4,8 @@ import path from 'path';
 import fs from 'fs';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
-import { RtcTokenBuilder, RtcRole } from 'agora-token';
+import agoraToken from 'agora-token';
+const { RtcTokenBuilder, RtcRole } = agoraToken;
 import { MeshNode, MeshPacket, ActiveRoute, EmergencyAlert } from './src/types/mesh';
 import {
   initDatabase,
@@ -986,21 +987,6 @@ app.post('/api/calls/log', async (req, res) => {
 
 // Setup Vite Development Server or Static Serving
 async function startServer() {
-  // Initialize MySQL database
-  console.log('[Server] Initializing MySQL Database...');
-  const dbConnected = await initDatabase();
-  if (dbConnected) {
-    try {
-      const dbUsers = await getAllUsers();
-      if (Object.keys(dbUsers).length > 0) {
-        userAccounts = { ...userAccounts, ...dbUsers };
-        saveUserDbToDisk();
-      }
-    } catch (e) {
-      console.error('[Server] Failed syncing initial DB users:', e);
-    }
-  }
-
   if (process.env.NODE_ENV !== 'production') {
     const vite = await createViteServer({
       server: { middlewareMode: true },
@@ -1018,6 +1004,23 @@ async function startServer() {
   server.listen(PORT, '0.0.0.0', () => {
     console.log(`[MeshTalk] Server running on http://localhost:${PORT}`);
   });
+
+  // Initialize MySQL database asynchronously in background
+  (async () => {
+    console.log('[Server] Initializing MySQL Database...');
+    const dbConnected = await initDatabase();
+    if (dbConnected) {
+      try {
+        const dbUsers = await getAllUsers();
+        if (Object.keys(dbUsers).length > 0) {
+          userAccounts = { ...userAccounts, ...dbUsers };
+          saveUserDbToDisk();
+        }
+      } catch (e) {
+        console.error('[Server] Failed syncing initial DB users:', e);
+      }
+    }
+  })();
 }
 
 startServer();
