@@ -42,6 +42,21 @@ export interface SharedFileRecord {
   uploadedAt: number;
 }
 
+export interface CallLogRecord {
+  id?: number;
+  callId: string;
+  callerCode: string;
+  callerName: string;
+  receiverCode: string;
+  receiverName: string;
+  startTime: number;
+  endTime: number;
+  durationSeconds: number;
+  durationMinutes: number;
+  callMode: 'AGORA' | 'MESH_PCM';
+  status: 'COMPLETED' | 'MISSED' | 'DECLINED';
+}
+
 let pool: mysql.Pool | null = null;
 let isConnected = false;
 
@@ -130,7 +145,28 @@ async function createTables() {
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
 
-    console.log('[Database] ✅ All MySQL database tables initialized (users, chat_history, shared_files).');
+    // 4. Call Logs Table (ভয়েস কলের সময়সীমা, কত মিনিট কথা হয়েছে তার হিস্ট্রি)
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS call_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        call_id VARCHAR(100) NOT NULL,
+        caller_code VARCHAR(64) NOT NULL,
+        caller_name VARCHAR(255) NOT NULL,
+        receiver_code VARCHAR(64) NOT NULL,
+        receiver_name VARCHAR(255) NOT NULL,
+        start_time BIGINT NOT NULL,
+        end_time BIGINT NOT NULL,
+        duration_seconds INT NOT NULL DEFAULT 0,
+        duration_minutes DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        call_mode VARCHAR(50) NOT NULL DEFAULT 'MESH_PCM',
+        status VARCHAR(50) NOT NULL DEFAULT 'COMPLETED',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_caller (caller_code),
+        INDEX idx_receiver (receiver_code)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+
+    console.log('[Database] ✅ All MySQL database tables initialized (users, chat_history, shared_files, call_logs).');
   } catch (err) {
     console.error('[Database] ❌ Error creating tables:', err);
   }
@@ -330,6 +366,70 @@ export async function getSharedFiles(senderId?: string): Promise<SharedFileRecor
     }
   } catch (err) {
     console.error('[Database] Get shared files failed:', err);
+  }
+  return [];
+}
+
+// Call Logs Operations
+export async function saveCallLog(log: CallLogRecord): Promise<boolean> {
+  if (!pool || !isConnected) return false;
+  try {
+    const durSec = log.durationSeconds || Math.max(0, Math.floor((log.endTime - log.startTime) / 1000));
+    const durMin = Number((durSec / 60).toFixed(2));
+    await pool.query(
+      `INSERT INTO call_logs (call_id, caller_code, caller_name, receiver_code, receiver_name, start_time, end_time, duration_seconds, duration_minutes, call_mode, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        log.callId,
+        log.callerCode,
+        log.callerName,
+        log.receiverCode,
+        log.receiverName,
+        log.startTime,
+        log.endTime || Date.now(),
+        durSec,
+        durMin,
+        log.callMode || 'MESH_PCM',
+        log.status || 'COMPLETED',
+      ]
+    );
+    return true;
+  } catch (err) {
+    console.error('[Database] Save call log failed:', err);
+    return false;
+  }
+}
+
+export async function getCallLogs(userCode?: string): Promise<CallLogRecord[]> {
+  if (!pool || !isConnected) return [];
+  try {
+    let query = `SELECT * FROM call_logs`;
+    let params: any[] = [];
+    if (userCode) {
+      query += ` WHERE caller_code = ? OR receiver_code = ?`;
+      params = [userCode, userCode];
+    }
+    query += ` ORDER BY start_time DESC LIMIT 100`;
+
+    const [rows]: any = await pool.query(query, params);
+    if (Array.isArray(rows)) {
+      return rows.map((row) => ({
+        id: row.id,
+        callId: row.call_id,
+        callerCode: row.caller_code,
+        callerName: row.caller_name,
+        receiverCode: row.receiver_code,
+        receiverName: row.receiver_name,
+        startTime: Number(row.start_time),
+        endTime: Number(row.end_time),
+        durationSeconds: row.duration_seconds,
+        durationMinutes: Number(row.duration_minutes),
+        callMode: row.call_mode,
+        status: row.status,
+      }));
+    }
+  } catch (err) {
+    console.error('[Database] Get call logs failed:', err);
   }
   return [];
 }

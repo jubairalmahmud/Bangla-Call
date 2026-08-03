@@ -25,6 +25,7 @@ import {
   RefreshCw,
 } from 'lucide-react';
 import { MeshNode, ChatMessage, LanguageMode } from '../types/mesh';
+import { agoraVoiceEngine } from '../lib/agoraCallEngine';
 
 interface SavedContact {
   id: string;
@@ -126,6 +127,27 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
   });
 
   const timerRef = useRef<any>(null);
+
+  // Calling Engine Mode (1-Click Switcher between Agora HD & Mesh PCM)
+  const [callingEngineMode, setCallingEngineMode] = useState<'AGORA' | 'MESH_PCM'>('AGORA');
+  const [agoraAppId, setAgoraAppId] = useState<string>('8e48363cdc6c4fc696be606b8f3d6f64');
+
+  const fetchAgoraConfig = useCallback(async () => {
+    try {
+      const res = await fetch('/api/agora/config');
+      const data = await res.json();
+      if (data && data.success) {
+        if (data.appId) setAgoraAppId(data.appId);
+        if (data.mode) setCallingEngineMode(data.mode);
+      }
+    } catch (e) {
+      console.error('Error fetching Agora config in user view:', e);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchAgoraConfig();
+  }, [fetchAgoraConfig]);
 
   // Save contacts to localStorage
   useEffect(() => {
@@ -381,7 +403,7 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
     };
   }, [activeCall.isActive, activeCall.isMuted]);
 
-  const handleStartCall = (targetCode: string, targetName?: string) => {
+  const handleStartCall = async (targetCode: string, targetName?: string) => {
     const matchedNode = nodes.find((n) => n.id === targetCode);
     const matchedContact = contacts.find((c) => c.code === targetCode);
 
@@ -393,6 +415,12 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
 
     onSendCallSignal?.('INITIATE', targetCode, inputName || myNodeId);
 
+    // If Agora mode is active, join Agora RTC audio channel
+    if (callingEngineMode === 'AGORA') {
+      const channelName = `banglacall_${[inputCode || myNodeId, targetCode].sort().join('_')}`;
+      agoraVoiceEngine.joinAudioChannel(agoraAppId, channelName, inputCode || myNodeId);
+    }
+
     setActiveCall({
       isActive: true,
       targetCode,
@@ -402,10 +430,44 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
     });
   };
 
-  const handleRejectOrCutCall = () => {
-    if (activeCall.targetCode) {
-      onSendCallSignal?.('END', activeCall.targetCode, inputName || myNodeId);
+  const handleRejectOrCutCall = async () => {
+    const currentCode = inputCode || myNodeId;
+    const currentName = inputName || currentCode;
+    const targetCode = activeCall.targetCode;
+    const targetName = activeCall.targetName;
+    const duration = activeCall.durationSec;
+
+    if (targetCode) {
+      onSendCallSignal?.('END', targetCode, currentName);
     }
+
+    // Leave Agora RTC audio channel if in Agora mode
+    if (callingEngineMode === 'AGORA') {
+      await agoraVoiceEngine.leaveAudioChannel();
+    }
+
+    // Save call duration history log to server DB
+    if (duration > 0 && targetCode) {
+      try {
+        await fetch('/api/calls/log', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            callId: `call-${Date.now()}`,
+            callerCode: currentCode,
+            callerName: currentName,
+            receiverCode: targetCode,
+            receiverName: targetName,
+            durationSeconds: duration,
+            callMode: callingEngineMode,
+            status: 'COMPLETED',
+          }),
+        });
+      } catch (err) {
+        console.error('Error saving call duration log:', err);
+      }
+    }
+
     setActiveCall({
       isActive: false,
       targetCode: '',
@@ -621,6 +683,45 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
         </div>
       </div>
 
+      {/* 1-CLICK AGORA SYSTEM MODE SWITCHER BANNER */}
+      <div className="bg-[#14161B] border-2 border-cyan-500/50 p-3 rounded-lg flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg">
+        <div className="flex items-center gap-3">
+          <div className="w-9 h-9 rounded-full bg-cyan-500/20 border border-cyan-400 flex items-center justify-center text-cyan-300 shrink-0">
+            <Radio className="w-5 h-5 animate-pulse" />
+          </div>
+          <div>
+            <div className="flex items-center gap-2">
+              <span className="text-[10px] text-cyan-300 uppercase font-extrabold tracking-wider">
+                কল ইঞ্জিন মোড:
+              </span>
+              <span
+                className={`px-2 py-0.5 rounded text-[11px] font-black uppercase tracking-wider border ${
+                  callingEngineMode === 'AGORA'
+                    ? 'bg-cyan-400 text-black border-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.5)]'
+                    : 'bg-amber-400 text-black border-amber-300'
+                }`}
+              >
+                {callingEngineMode === 'AGORA' ? '🌐 AGORA HD VOICE (আগোরার এপিআই মুড)' : '⚡ MESH PCM VOICE (মেস পিসিএম)'}
+              </span>
+            </div>
+            <p className="text-[11px] text-slate-300 mt-0.5">
+              {callingEngineMode === 'AGORA'
+                ? 'এক ক্লিকে আগোরা সার্ভিস সক্রিয়। হাই ডেফিনেশন বাস্তব সময়ের ভয়েস ক্রিস্টাল ক্লিয়ার কোয়ালিটি।'
+                : 'ইন্টারনেট ছাড়া অফ-গ্রিড পিটুপি পিসিএম ভয়েস স্ট্রিমিং মোড।'}
+            </p>
+          </div>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => setCallingEngineMode((prev) => (prev === 'AGORA' ? 'MESH_PCM' : 'AGORA'))}
+          className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-emerald-400 hover:from-cyan-400 hover:to-emerald-300 text-black font-extrabold text-xs uppercase rounded flex items-center justify-center gap-2 cursor-pointer shadow-md transition-all shrink-0"
+        >
+          <RefreshCw className="w-4 h-4" />
+          <span>১-ক্লিকে {callingEngineMode === 'AGORA' ? 'Mesh PCM মুড' : 'Agora মুড'} চালু</span>
+        </button>
+      </div>
+
       {/* Main Mode Navigation (Keypad / Phonebook / Chat) */}
       <div className="grid grid-cols-3 gap-2 bg-[#0E1014] p-1.5 border border-[#2D3139] rounded">
         <button
@@ -686,6 +787,12 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
               <button
                 onClick={() => {
                   onSendCallSignal?.('ACCEPT', incomingCall.callerId, inputName || myNodeId);
+                  
+                  if (callingEngineMode === 'AGORA') {
+                    const channelName = `banglacall_${[inputCode || myNodeId, incomingCall.callerId].sort().join('_')}`;
+                    agoraVoiceEngine.joinAudioChannel(agoraAppId, channelName, inputCode || myNodeId);
+                  }
+
                   setActiveCall({
                     isActive: true,
                     targetCode: incomingCall.callerId,

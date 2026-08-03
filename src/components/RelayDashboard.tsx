@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useCallback } from 'react';
 import {
   Radio,
   Zap,
@@ -17,6 +17,11 @@ import {
   Crown,
   PhoneCall,
   RefreshCw,
+  Key,
+  Clock,
+  Volume2,
+  Save,
+  CheckCircle2,
 } from 'lucide-react';
 import { MeshNode, MeshPacket, LanguageMode } from '../types/mesh';
 
@@ -45,12 +50,94 @@ export const RelayDashboard: React.FC<RelayDashboardProps> = ({
   const [maxHopsLimit, setMaxHopsLimit] = useState<number>(7);
   const [isAutoForwarding, setIsAutoForwarding] = useState<boolean>(true);
 
+  // Agora Master Control State
+  const [agoraAppId, setAgoraAppId] = useState<string>('8e48363cdc6c4fc696be606b8f3d6f64');
+  const [agoraCert, setAgoraCert] = useState<string>('2fc1a4e7638a423ca2b96b0f3cd69fcd');
+  const [agoraMode, setAgoraMode] = useState<'AGORA' | 'MESH_PCM'>('AGORA');
+  const [agoraEnabled, setAgoraEnabled] = useState<boolean>(true);
+  const [isSavingAgora, setIsSavingAgora] = useState<boolean>(false);
+  const [agoraSaveMsg, setAgoraSaveMsg] = useState<string | null>(null);
+
+  // Call Logs & History State
+  const [callLogs, setCallLogs] = useState<any[]>([]);
+  const [callSummary, setCallSummary] = useState<{
+    totalCalls: number;
+    totalMinutes: number;
+    totalSeconds: number;
+    userStats: Record<string, { name: string; totalSeconds: number; callCount: number }>;
+  } | null>(null);
+  const [isLoadingCallLogs, setIsLoadingCallLogs] = useState<boolean>(false);
+
   const [relayedCount, setRelayedCount] = useState<number>(
     () => packets.filter((p) => p.hopCount > 1).length + 42
   );
   const [copiedLink, setCopiedLink] = useState<boolean>(false);
 
   const relayUrl = `${window.location.origin}?mode=relay`;
+
+  const fetchAgoraConfig = useCallback(async () => {
+    try {
+      const res = await fetch('/api/agora/config');
+      const data = await res.json();
+      if (data && data.success) {
+        if (data.appId) setAgoraAppId(data.appId);
+        if (data.mode) setAgoraMode(data.mode);
+        if (data.appCertificate) setAgoraCert(data.appCertificate);
+        if (data.enabled !== undefined) setAgoraEnabled(data.enabled);
+      }
+    } catch (e) {
+      console.error('Error fetching Agora config:', e);
+    }
+  }, []);
+
+  const fetchCallLogs = useCallback(async () => {
+    setIsLoadingCallLogs(true);
+    try {
+      const res = await fetch('/api/calls/history');
+      const data = await res.json();
+      if (data && data.success) {
+        setCallLogs(data.logs || []);
+        setCallSummary(data.summary || null);
+      }
+    } catch (e) {
+      console.error('Error fetching call history:', e);
+    } finally {
+      setIsLoadingCallLogs(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchAgoraConfig();
+    fetchCallLogs();
+  }, [fetchAgoraConfig, fetchCallLogs]);
+
+  const handleSaveAgoraSettings = async () => {
+    setIsSavingAgora(true);
+    setAgoraSaveMsg(null);
+    try {
+      const res = await fetch('/api/agora/config', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          appId: agoraAppId,
+          appCertificate: agoraCert,
+          mode: agoraMode,
+          enabled: agoraEnabled,
+        }),
+      });
+      const data = await res.json();
+      if (data && data.success) {
+        setAgoraSaveMsg('✅ Agora কনফিগারেশন সফলভাবে আপডেট করা হয়েছে!');
+        setTimeout(() => setAgoraSaveMsg(null), 3000);
+      } else {
+        setAgoraSaveMsg('❌ আপডেট করতে সমস্যা হয়েছে');
+      }
+    } catch (e: any) {
+      setAgoraSaveMsg(`❌ ত্রুটি: ${e.message}`);
+    } finally {
+      setIsSavingAgora(false);
+    }
+  };
 
   useEffect(() => {
     const interval = setInterval(() => {
@@ -402,6 +489,181 @@ export const RelayDashboard: React.FC<RelayDashboardProps> = ({
                 <option value={10}>১০ হপ (~১০ কিমি)</option>
               </select>
             </div>
+          </div>
+        </div>
+      </div>
+
+      {/* AGORA MASTER CONTROL & CALL DURATION ANALYTICS */}
+      <div className="grid grid-cols-1 md:grid-cols-2 gap-4 pt-2">
+        {/* Agora API Key & Configuration Box */}
+        <div className="bg-[#14161B] border-2 border-cyan-500/50 p-4 space-y-4 rounded-lg shadow-xl">
+          <div className="flex items-center justify-between border-b border-[#2D3139] pb-2.5">
+            <h3 className="text-sm font-extrabold text-cyan-400 uppercase flex items-center gap-2">
+              <Key className="w-4 h-4 text-cyan-400" />
+              <span>🎙️ আগোরা (Agora) ভয়েস মাস্টার কন্ট্রোল</span>
+            </h3>
+            <span className="px-2 py-0.5 rounded bg-cyan-950 text-cyan-300 font-extrabold text-[10px] border border-cyan-500/40">
+              API কনফিগারেশন
+            </span>
+          </div>
+
+          <div className="space-y-3 text-xs">
+            <div>
+              <label className="text-[11px] font-bold text-cyan-300 uppercase block mb-1">
+                Agora App ID (এপিআই কি):
+              </label>
+              <div className="relative">
+                <input
+                  type="text"
+                  value={agoraAppId}
+                  onChange={(e) => setAgoraAppId(e.target.value)}
+                  placeholder="e.g. e8992147fd9c48bc8945419fb25dfb3e"
+                  className="w-full bg-[#0E1014] text-white border border-cyan-500/40 focus:border-cyan-400 px-3 py-2 font-mono text-xs rounded"
+                />
+              </div>
+              <p className="text-[10px] text-slate-400 mt-1">
+                Agora Console (console.agora.io) থেকে সংগৃহীত App ID টি এখানে প্রদেয়।
+              </p>
+            </div>
+
+            <div>
+              <label className="text-[11px] font-bold text-slate-300 uppercase block mb-1">
+                Agora App Certificate (ঐচ্ছিক):
+              </label>
+              <input
+                type="password"
+                value={agoraCert}
+                onChange={(e) => setAgoraCert(e.target.value)}
+                placeholder="মাস্টার সিক্রেট টোকেন সার্টিফিকেট (যদি থাকে)"
+                className="w-full bg-[#0E1014] text-white border border-[#2D3139] focus:border-cyan-400 px-3 py-2 font-mono text-xs rounded"
+              />
+            </div>
+
+            <div>
+              <label className="text-[11px] font-bold text-emerald-400 uppercase block mb-1">
+                ডিফল্ট ভয়েস কল মোড (System Mode):
+              </label>
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  type="button"
+                  onClick={() => setAgoraMode('AGORA')}
+                  className={`p-2 rounded border text-center transition-all cursor-pointer text-xs font-bold ${
+                    agoraMode === 'AGORA'
+                      ? 'bg-cyan-500 text-black border-cyan-400 font-extrabold shadow-md'
+                      : 'bg-[#0E1014] text-slate-300 border-[#2D3139]'
+                  }`}
+                >
+                  🌐 Agora HD Voice (প্রস্তাবিত)
+                </button>
+                <button
+                  type="button"
+                  onClick={() => setAgoraMode('MESH_PCM')}
+                  className={`p-2 rounded border text-center transition-all cursor-pointer text-xs font-bold ${
+                    agoraMode === 'MESH_PCM'
+                      ? 'bg-amber-500 text-black border-amber-400 font-extrabold shadow-md'
+                      : 'bg-[#0E1014] text-slate-300 border-[#2D3139]'
+                  }`}
+                >
+                  ⚡ Mesh P2P PCM (অফ-গ্রিড)
+                </button>
+              </div>
+            </div>
+
+            {agoraSaveMsg && (
+              <div className="p-2 rounded bg-cyan-950 border border-cyan-400 text-cyan-200 text-xs font-bold animate-pulse">
+                {agoraSaveMsg}
+              </div>
+            )}
+
+            <button
+              type="button"
+              onClick={handleSaveAgoraSettings}
+              disabled={isSavingAgora}
+              className="w-full py-2.5 bg-cyan-400 hover:bg-cyan-300 text-black font-extrabold text-xs uppercase rounded flex items-center justify-center gap-2 cursor-pointer transition-all shadow-lg"
+            >
+              <Save className="w-4 h-4" />
+              <span>{isSavingAgora ? 'সংরক্ষণ হচ্ছে...' : 'মাস্টার কনফিগারেশন সেভ করুন'}</span>
+            </button>
+          </div>
+        </div>
+
+        {/* User Call Minutes & Duration History Panel */}
+        <div className="bg-[#14161B] border-2 border-emerald-500/50 p-4 space-y-4 rounded-lg shadow-xl">
+          <div className="flex items-center justify-between border-b border-[#2D3139] pb-2.5">
+            <h3 className="text-sm font-extrabold text-emerald-400 uppercase flex items-center gap-2">
+              <Clock className="w-4 h-4 text-emerald-400" />
+              <span>📞 ইউজারের কথাবলার মিনিট ও কলের ইতিহাস</span>
+            </h3>
+            <button
+              type="button"
+              onClick={fetchCallLogs}
+              disabled={isLoadingCallLogs}
+              className="p-1 text-slate-400 hover:text-emerald-400 transition-colors"
+              title="রিফ্রেশ করুন"
+            >
+              <RefreshCw className={`w-4 h-4 ${isLoadingCallLogs ? 'animate-spin' : ''}`} />
+            </button>
+          </div>
+
+          {/* Quick Stats Cards */}
+          <div className="grid grid-cols-2 gap-2 text-center">
+            <div className="bg-[#0E1014] border border-emerald-500/30 p-2.5 rounded">
+              <span className="text-[10px] text-slate-400 uppercase font-bold block">মোট কথাবলা সময়</span>
+              <span className="text-lg font-black text-emerald-400">
+                {callSummary ? `${callSummary.totalMinutes} মিনিট` : '০.০০ মিনিট'}
+              </span>
+            </div>
+            <div className="bg-[#0E1014] border border-cyan-500/30 p-2.5 rounded">
+              <span className="text-[10px] text-slate-400 uppercase font-bold block">মোট কলের সংখ্যা</span>
+              <span className="text-lg font-black text-cyan-400">
+                {callSummary ? `${callSummary.totalCalls} টি` : '০ টি'}
+              </span>
+            </div>
+          </div>
+
+          {/* Call Log List Table */}
+          <div className="space-y-2 max-h-60 overflow-y-auto pr-1">
+            {callLogs.length === 0 ? (
+              <div className="text-center py-8 text-xs text-slate-500">
+                এখনো কোনো কলের ইতিহাস তৈরি হয়নি...
+              </div>
+            ) : (
+              callLogs.map((log: any, idx: number) => {
+                const durMin = (log.durationSeconds / 60).toFixed(1);
+                const isAgora = log.callMode === 'AGORA';
+                const dateStr = new Date(log.startTime || Date.now()).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+
+                return (
+                  <div
+                    key={log.id || idx}
+                    className="bg-[#0E1014] border border-[#2D3139] p-2.5 rounded flex items-center justify-between text-xs"
+                  >
+                    <div>
+                      <div className="font-extrabold text-white flex items-center gap-1.5">
+                        <span className="text-cyan-300">{log.callerName}</span>
+                        <span className="text-slate-500">➔</span>
+                        <span className="text-emerald-300">{log.receiverName}</span>
+                      </div>
+                      <div className="flex items-center gap-2 text-[10px] text-slate-400 mt-0.5">
+                        <span>⏰ {dateStr}</span>
+                        <span className={`px-1.5 py-0.2 rounded text-[9px] font-bold ${isAgora ? 'bg-cyan-950 text-cyan-300 border border-cyan-500/40' : 'bg-amber-950 text-amber-300 border border-amber-500/40'}`}>
+                          {isAgora ? 'Agora HD' : 'Mesh PCM'}
+                        </span>
+                      </div>
+                    </div>
+
+                    <div className="text-right">
+                      <span className="text-emerald-400 font-extrabold text-sm block">
+                        {log.durationSeconds > 60 ? `${durMin} মিনিট` : `${log.durationSeconds} সে.`}
+                      </span>
+                      <span className="text-[9px] text-slate-400">
+                        {log.status === 'COMPLETED' ? '✅ সম্পন্ন' : '❌ সংকেত বিচ্ছিন্ন'}
+                      </span>
+                    </div>
+                  </div>
+                );
+              })
+            )}
           </div>
         </div>
       </div>

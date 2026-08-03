@@ -110,7 +110,26 @@ async function createTables() {
         INDEX idx_sender_file (sender_id)
       ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
     `);
-    console.log("[Database] \u2705 All MySQL database tables initialized (users, chat_history, shared_files).");
+    await pool.query(`
+      CREATE TABLE IF NOT EXISTS call_logs (
+        id INT AUTO_INCREMENT PRIMARY KEY,
+        call_id VARCHAR(100) NOT NULL,
+        caller_code VARCHAR(64) NOT NULL,
+        caller_name VARCHAR(255) NOT NULL,
+        receiver_code VARCHAR(64) NOT NULL,
+        receiver_name VARCHAR(255) NOT NULL,
+        start_time BIGINT NOT NULL,
+        end_time BIGINT NOT NULL,
+        duration_seconds INT NOT NULL DEFAULT 0,
+        duration_minutes DECIMAL(10,2) NOT NULL DEFAULT 0.00,
+        call_mode VARCHAR(50) NOT NULL DEFAULT 'MESH_PCM',
+        status VARCHAR(50) NOT NULL DEFAULT 'COMPLETED',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+        INDEX idx_caller (caller_code),
+        INDEX idx_receiver (receiver_code)
+      ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_unicode_ci;
+    `);
+    console.log("[Database] \u2705 All MySQL database tables initialized (users, chat_history, shared_files, call_logs).");
   } catch (err) {
     console.error("[Database] \u274C Error creating tables:", err);
   }
@@ -279,6 +298,66 @@ async function getSharedFiles(senderId) {
   }
   return [];
 }
+async function saveCallLog(log) {
+  if (!pool || !isConnected) return false;
+  try {
+    const durSec = log.durationSeconds || Math.max(0, Math.floor((log.endTime - log.startTime) / 1e3));
+    const durMin = Number((durSec / 60).toFixed(2));
+    await pool.query(
+      `INSERT INTO call_logs (call_id, caller_code, caller_name, receiver_code, receiver_name, start_time, end_time, duration_seconds, duration_minutes, call_mode, status)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        log.callId,
+        log.callerCode,
+        log.callerName,
+        log.receiverCode,
+        log.receiverName,
+        log.startTime,
+        log.endTime || Date.now(),
+        durSec,
+        durMin,
+        log.callMode || "MESH_PCM",
+        log.status || "COMPLETED"
+      ]
+    );
+    return true;
+  } catch (err) {
+    console.error("[Database] Save call log failed:", err);
+    return false;
+  }
+}
+async function getCallLogs(userCode) {
+  if (!pool || !isConnected) return [];
+  try {
+    let query = `SELECT * FROM call_logs`;
+    let params = [];
+    if (userCode) {
+      query += ` WHERE caller_code = ? OR receiver_code = ?`;
+      params = [userCode, userCode];
+    }
+    query += ` ORDER BY start_time DESC LIMIT 100`;
+    const [rows] = await pool.query(query, params);
+    if (Array.isArray(rows)) {
+      return rows.map((row) => ({
+        id: row.id,
+        callId: row.call_id,
+        callerCode: row.caller_code,
+        callerName: row.caller_name,
+        receiverCode: row.receiver_code,
+        receiverName: row.receiver_name,
+        startTime: Number(row.start_time),
+        endTime: Number(row.end_time),
+        durationSeconds: row.duration_seconds,
+        durationMinutes: Number(row.duration_minutes),
+        callMode: row.call_mode,
+        status: row.status
+      }));
+    }
+  } catch (err) {
+    console.error("[Database] Get call logs failed:", err);
+  }
+  return [];
+}
 function isDbConnected() {
   return isConnected;
 }
@@ -288,6 +367,55 @@ var PORT = 3e3;
 var app = (0, import_express.default)();
 app.use(import_express.default.json({ limit: "50mb" }));
 var DB_FILE_PATH = import_path.default.join(process.cwd(), "mesh_user_db.json");
+var AGORA_FILE_PATH = import_path.default.join(process.cwd(), "agora_settings.json");
+var CALL_LOGS_FILE_PATH = import_path.default.join(process.cwd(), "call_logs.json");
+var agoraConfig = {
+  appId: process.env.AGORA_APP_ID || "8e48363cdc6c4fc696be606b8f3d6f64",
+  appCertificate: process.env.AGORA_APP_CERTIFICATE || "2fc1a4e7638a423ca2b96b0f3cd69fcd",
+  mode: "AGORA",
+  enabled: true
+};
+var callLogsList = [];
+try {
+  if (import_fs.default.existsSync(AGORA_FILE_PATH)) {
+    const raw = import_fs.default.readFileSync(AGORA_FILE_PATH, "utf-8");
+    const parsed = JSON.parse(raw);
+    agoraConfig = { ...agoraConfig, ...parsed };
+    if (agoraConfig.appId === "e8992147fd9c48bc8945419fb25dfb3e") {
+      agoraConfig.appId = "8e48363cdc6c4fc696be606b8f3d6f64";
+      agoraConfig.appCertificate = "2fc1a4e7638a423ca2b96b0f3cd69fcd";
+      import_fs.default.writeFileSync(AGORA_FILE_PATH, JSON.stringify(agoraConfig, null, 2));
+    }
+  } else {
+    import_fs.default.writeFileSync(AGORA_FILE_PATH, JSON.stringify(agoraConfig, null, 2));
+  }
+} catch (e) {
+  console.error("Error reading Agora settings:", e);
+}
+function saveAgoraConfigToDisk() {
+  try {
+    import_fs.default.writeFileSync(AGORA_FILE_PATH, JSON.stringify(agoraConfig, null, 2));
+  } catch (e) {
+    console.error("Failed to save Agora settings:", e);
+  }
+}
+try {
+  if (import_fs.default.existsSync(CALL_LOGS_FILE_PATH)) {
+    const raw = import_fs.default.readFileSync(CALL_LOGS_FILE_PATH, "utf-8");
+    callLogsList = JSON.parse(raw);
+  } else {
+    import_fs.default.writeFileSync(CALL_LOGS_FILE_PATH, JSON.stringify([], null, 2));
+  }
+} catch (e) {
+  console.error("Error reading call logs:", e);
+}
+function saveCallLogsToDisk() {
+  try {
+    import_fs.default.writeFileSync(CALL_LOGS_FILE_PATH, JSON.stringify(callLogsList.slice(-200), null, 2));
+  } catch (e) {
+    console.error("Failed to save call logs:", e);
+  }
+}
 var userAccounts = {};
 try {
   if (import_fs.default.existsSync(DB_FILE_PATH)) {
@@ -469,7 +597,12 @@ wss.on("connection", (ws) => {
       emergencyAlerts,
       assignedNodeId,
       assignedNodeName: matchedNode ? matchedNode.name : assignedNodeId,
-      onlineCount
+      onlineCount,
+      agoraConfig: {
+        appId: agoraConfig.appId,
+        mode: agoraConfig.mode,
+        enabled: agoraConfig.enabled
+      }
     })
   );
   broadcastToAllWs({ type: "TOPOLOGY_UPDATED", nodes: meshNodes, onlineCount });
@@ -881,6 +1014,116 @@ app.post("/api/db/files/upload", async (req, res) => {
     };
     const saved = await saveSharedFile(record);
     res.json({ success: true, saved, file: record });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+app.get("/api/agora/config", (req, res) => {
+  res.json({
+    success: true,
+    appId: agoraConfig.appId,
+    appCertificate: agoraConfig.appCertificate ? "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" + agoraConfig.appCertificate.slice(-4) : "",
+    hasCertificate: Boolean(agoraConfig.appCertificate),
+    mode: agoraConfig.mode,
+    enabled: agoraConfig.enabled
+  });
+});
+app.post("/api/agora/config", (req, res) => {
+  try {
+    const { appId, appCertificate, mode, enabled } = req.body;
+    if (appId !== void 0) agoraConfig.appId = appId.trim();
+    if (appCertificate !== void 0 && appCertificate !== "\u2022\u2022\u2022\u2022\u2022\u2022\u2022\u2022" && !appCertificate.startsWith("\u2022\u2022\u2022\u2022")) {
+      agoraConfig.appCertificate = appCertificate.trim();
+    }
+    if (mode !== void 0 && (mode === "AGORA" || mode === "MESH_PCM")) {
+      agoraConfig.mode = mode;
+    }
+    if (enabled !== void 0) agoraConfig.enabled = Boolean(enabled);
+    saveAgoraConfigToDisk();
+    broadcastToAllWs({
+      type: "AGORA_CONFIG_UPDATED",
+      config: {
+        appId: agoraConfig.appId,
+        mode: agoraConfig.mode,
+        enabled: agoraConfig.enabled
+      }
+    });
+    res.json({
+      success: true,
+      message: "Agora \u043D\u0430\u0441\u0442\u0440\u043E\u0439\u043A\u0438 \u0986\u09AA\u09A1\u09C7\u099F \u0995\u09B0\u09BE \u09B9\u09DF\u09C7\u099B\u09C7!",
+      config: {
+        appId: agoraConfig.appId,
+        mode: agoraConfig.mode,
+        enabled: agoraConfig.enabled
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+app.get("/api/calls/history", async (req, res) => {
+  try {
+    const userCode = req.query.userCode;
+    const dbLogs = await getCallLogs(userCode);
+    const mergedLogs = dbLogs.length > 0 ? dbLogs : callLogsList;
+    let totalSeconds = 0;
+    const userStats = {};
+    mergedLogs.forEach((log) => {
+      totalSeconds += log.durationSeconds || 0;
+      if (!userStats[log.callerCode]) {
+        userStats[log.callerCode] = { name: log.callerName || log.callerCode, totalSeconds: 0, callCount: 0 };
+      }
+      userStats[log.callerCode].totalSeconds += log.durationSeconds || 0;
+      userStats[log.callerCode].callCount += 1;
+      if (!userStats[log.receiverCode]) {
+        userStats[log.receiverCode] = { name: log.receiverName || log.receiverCode, totalSeconds: 0, callCount: 0 };
+      }
+      userStats[log.receiverCode].totalSeconds += log.durationSeconds || 0;
+      userStats[log.receiverCode].callCount += 1;
+    });
+    const totalMinutes = Number((totalSeconds / 60).toFixed(2));
+    res.json({
+      success: true,
+      logs: mergedLogs,
+      summary: {
+        totalCalls: mergedLogs.length,
+        totalSeconds,
+        totalMinutes,
+        userStats
+      }
+    });
+  } catch (err) {
+    res.status(500).json({ error: err.message, logs: callLogsList });
+  }
+});
+app.post("/api/calls/log", async (req, res) => {
+  try {
+    const { callId, callerCode, callerName, receiverCode, receiverName, startTime, endTime, durationSeconds, callMode, status } = req.body;
+    if (!callerCode || !receiverCode) {
+      return res.status(400).json({ error: "callerCode and receiverCode are required" });
+    }
+    const start = startTime || Date.now() - (durationSeconds || 0) * 1e3;
+    const end = endTime || Date.now();
+    const durSec = durationSeconds || Math.max(0, Math.floor((end - start) / 1e3));
+    const durMin = Number((durSec / 60).toFixed(2));
+    const logRecord = {
+      callId: callId || `call-${Date.now()}`,
+      callerCode,
+      callerName: callerName || callerCode,
+      receiverCode,
+      receiverName: receiverName || receiverCode,
+      startTime: start,
+      endTime: end,
+      durationSeconds: durSec,
+      durationMinutes: durMin,
+      callMode: callMode || agoraConfig.mode || "AGORA",
+      status: status || "COMPLETED"
+    };
+    callLogsList.unshift(logRecord);
+    saveCallLogsToDisk();
+    saveCallLog(logRecord);
+    broadcastToAllWs({ type: "CALL_LOG_ADDED", log: logRecord });
+    res.json({ success: true, log: logRecord });
   } catch (err) {
     res.status(500).json({ error: err.message });
   }
