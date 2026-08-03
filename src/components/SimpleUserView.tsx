@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import {
   PhoneCall,
   PhoneOff,
@@ -22,6 +22,7 @@ import {
   UserPlus,
   Phone,
   Hash,
+  RefreshCw,
 } from 'lucide-react';
 import { MeshNode, ChatMessage, LanguageMode } from '../types/mesh';
 
@@ -130,6 +131,105 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
   useEffect(() => {
     localStorage.setItem('mesh_saved_contacts', JSON.stringify(contacts));
   }, [contacts]);
+
+  // DB Users Sync State
+  const [isSyncingDb, setIsSyncingDb] = useState<boolean>(false);
+  const [dbUsersCount, setDbUsersCount] = useState<number>(0);
+
+  const fetchDbUsers = useCallback(async () => {
+    setIsSyncingDb(true);
+    try {
+      const res = await fetch('/api/db/users');
+      const data = await res.json();
+      if (data && data.users) {
+        const dbUsersMap = data.users;
+        setDbUsersCount(Object.keys(dbUsersMap).length);
+
+        setContacts((prevContacts) => {
+          const updated = [...prevContacts];
+          Object.values(dbUsersMap).forEach((u: any) => {
+            if (u.code && !updated.some((c) => c.code === u.code)) {
+              updated.push({
+                id: `db-${u.code}`,
+                name: u.name || `User ${u.code}`,
+                code: u.code,
+              });
+            }
+          });
+          return updated;
+        });
+      }
+    } catch (e) {
+      console.error('Error fetching DB users:', e);
+    } finally {
+      setIsSyncingDb(false);
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchDbUsers();
+  }, [fetchDbUsers]);
+
+  // Incoming Call Ringtone Synthesizer Effect (Web Audio API)
+  useEffect(() => {
+    if (incomingCall && !activeCall.isActive) {
+      let audioCtx: AudioContext | null = null;
+      let intervalId: any = null;
+      let isStopped = false;
+
+      const triggerRingtonePulse = () => {
+        if (isStopped) return;
+        try {
+          const AudioContextClass = window.AudioContext || (window as any).webkitAudioContext;
+          if (!AudioContextClass) return;
+          if (!audioCtx || audioCtx.state === 'closed') {
+            audioCtx = new AudioContextClass();
+          }
+
+          if (audioCtx.state === 'suspended') {
+            audioCtx.resume();
+          }
+
+          // Dual Frequency Tone (440Hz + 480Hz) Ringtone
+          const osc1 = audioCtx.createOscillator();
+          const osc2 = audioCtx.createOscillator();
+          const gainNode = audioCtx.createGain();
+
+          osc1.type = 'sine';
+          osc2.type = 'sine';
+          osc1.frequency.setValueAtTime(440, audioCtx.currentTime);
+          osc2.frequency.setValueAtTime(480, audioCtx.currentTime);
+
+          gainNode.gain.setValueAtTime(0, audioCtx.currentTime);
+          gainNode.gain.linearRampToValueAtTime(0.25, audioCtx.currentTime + 0.05);
+          gainNode.gain.setValueAtTime(0.25, audioCtx.currentTime + 1.2);
+          gainNode.gain.exponentialRampToValueAtTime(0.001, audioCtx.currentTime + 1.5);
+
+          osc1.connect(gainNode);
+          osc2.connect(gainNode);
+          gainNode.connect(audioCtx.destination);
+
+          osc1.start();
+          osc2.start();
+          osc1.stop(audioCtx.currentTime + 1.5);
+          osc2.stop(audioCtx.currentTime + 1.5);
+        } catch (err) {
+          console.error('Ringtone sound error:', err);
+        }
+      };
+
+      triggerRingtonePulse();
+      intervalId = setInterval(triggerRingtonePulse, 2400);
+
+      return () => {
+        isStopped = true;
+        if (intervalId) clearInterval(intervalId);
+        if (audioCtx) {
+          try { audioCtx.close(); } catch (e) {}
+        }
+      };
+    }
+  }, [incomingCall, activeCall.isActive]);
 
   // Active Call timer
   useEffect(() => {
@@ -761,13 +861,24 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
               />
             </div>
 
-            <button
-              onClick={() => setShowAddContactModal(true)}
-              className="w-full sm:w-auto px-4 py-2 bg-[#00FF9C] text-black font-extrabold text-xs uppercase flex items-center justify-center gap-1.5 rounded hover:bg-[#00FF9C]/90 cursor-pointer shadow-md"
-            >
-              <UserPlus className="w-4 h-4" />
-              <span>নতুন কন্টাক্ট সেভ করুন</span>
-            </button>
+            <div className="flex gap-2 w-full sm:w-auto">
+              <button
+                type="button"
+                onClick={fetchDbUsers}
+                disabled={isSyncingDb}
+                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 font-bold text-xs uppercase flex items-center justify-center gap-1.5 rounded cursor-pointer border border-cyan-500/30"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingDb ? 'animate-spin' : ''}`} />
+                <span>ডিবি রিফ্রেশ ({dbUsersCount})</span>
+              </button>
+              <button
+                onClick={() => setShowAddContactModal(true)}
+                className="px-4 py-2 bg-[#00FF9C] text-black font-extrabold text-xs uppercase flex items-center justify-center gap-1.5 rounded hover:bg-[#00FF9C]/90 cursor-pointer shadow-md"
+              >
+                <UserPlus className="w-4 h-4" />
+                <span>নতুন কন্টাক্ট সেভ করুন</span>
+              </button>
+            </div>
           </div>
 
           {/* Add Contact Modal Form */}

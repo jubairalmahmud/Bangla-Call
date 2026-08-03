@@ -796,9 +796,17 @@ app.get("/api/db/status", (req, res) => {
 app.get("/api/db/users", async (req, res) => {
   try {
     const dbUsers = await getAllUsers();
-    res.json({ success: true, users: dbUsers, localUsers: userAccounts });
+    const mergedUsers = { ...userAccounts, ...dbUsers };
+    res.json({
+      success: true,
+      users: mergedUsers,
+      dbUsers,
+      localUsers: userAccounts,
+      isDbConnected: isDbConnected(),
+      totalUsers: Object.keys(mergedUsers).length
+    });
   } catch (err) {
-    res.status(500).json({ error: err.message });
+    res.status(500).json({ error: err.message, localUsers: userAccounts });
   }
 });
 app.post("/api/db/users/update", async (req, res) => {
