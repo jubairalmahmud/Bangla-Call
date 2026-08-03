@@ -4,6 +4,7 @@ import path from 'path';
 import fs from 'fs';
 import { WebSocketServer, WebSocket } from 'ws';
 import { createServer as createViteServer } from 'vite';
+import { RtcTokenBuilder, RtcRole } from 'agora-token';
 import { MeshNode, MeshPacket, ActiveRoute, EmergencyAlert } from './src/types/mesh';
 import {
   initDatabase,
@@ -810,6 +811,43 @@ app.post('/api/db/files/upload', async (req, res) => {
 });
 
 // Agora Configuration & Settings Endpoints (Master Control)
+app.get('/api/agora/token', (req, res) => {
+  try {
+    const channelName = req.query.channelName as string;
+
+    if (!channelName) {
+      return res.status(400).json({ error: 'channelName is required' });
+    }
+
+    let token: string | null = null;
+    if (agoraConfig.appCertificate) {
+      const expirationTimeInSeconds = 3600;
+      const currentTimestamp = Math.floor(Date.now() / 1000);
+      const privilegeExpiredTs = currentTimestamp + expirationTimeInSeconds;
+
+      token = RtcTokenBuilder.buildTokenWithUid(
+        agoraConfig.appId,
+        agoraConfig.appCertificate,
+        channelName,
+        0, // wildcard UID 0 allows any client joining the channel
+        RtcRole.PUBLISHER,
+        privilegeExpiredTs,
+        privilegeExpiredTs
+      );
+    }
+
+    res.json({
+      success: true,
+      appId: agoraConfig.appId,
+      channelName,
+      token,
+    });
+  } catch (err: any) {
+    console.error('Error generating Agora token:', err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
 app.get('/api/agora/config', (req, res) => {
   res.json({
     success: true,

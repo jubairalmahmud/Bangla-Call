@@ -62,9 +62,25 @@ class AgoraVoiceEngine {
         if (this.onRemoteUserLeft) this.onRemoteUserLeft(user);
       });
 
+      // Fetch dynamic token from backend if not explicitly provided
+      let activeToken = token;
+      let targetAppId = appId;
+      if (!activeToken) {
+        try {
+          const res = await fetch(`/api/agora/token?channelName=${encodeURIComponent(channelName)}&account=${encodeURIComponent(uid)}`);
+          const data = await res.json();
+          if (data && data.success) {
+            if (data.token) activeToken = data.token;
+            if (data.appId) targetAppId = data.appId;
+          }
+        } catch (e) {
+          console.warn('[Agora Engine] Fetch token warning:', e);
+        }
+      }
+
       // Join Channel
-      console.log(`[Agora Engine] Joining channel: ${channelName} with AppID: ${appId}`);
-      await this.client.join(appId, channelName, token || null, uid);
+      console.log(`[Agora Engine] Joining channel: ${channelName} with AppID: ${targetAppId}`);
+      await this.client.join(targetAppId, channelName, activeToken || null, uid);
       this.currentChannel = channelName;
       this.isJoined = true;
 

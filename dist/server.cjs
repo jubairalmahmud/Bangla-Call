@@ -28,6 +28,7 @@ var import_path = __toESM(require("path"), 1);
 var import_fs = __toESM(require("fs"), 1);
 var import_ws = require("ws");
 var import_vite = require("vite");
+var import_agora_token = require("agora-token");
 
 // src/db/database.ts
 var import_promise = __toESM(require("mysql2/promise"), 1);
@@ -1015,6 +1016,39 @@ app.post("/api/db/files/upload", async (req, res) => {
     const saved = await saveSharedFile(record);
     res.json({ success: true, saved, file: record });
   } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+app.get("/api/agora/token", (req, res) => {
+  try {
+    const channelName = req.query.channelName;
+    if (!channelName) {
+      return res.status(400).json({ error: "channelName is required" });
+    }
+    let token = null;
+    if (agoraConfig.appCertificate) {
+      const expirationTimeInSeconds = 3600;
+      const currentTimestamp = Math.floor(Date.now() / 1e3);
+      const privilegeExpiredTs = currentTimestamp + expirationTimeInSeconds;
+      token = import_agora_token.RtcTokenBuilder.buildTokenWithUid(
+        agoraConfig.appId,
+        agoraConfig.appCertificate,
+        channelName,
+        0,
+        // wildcard UID 0 allows any client joining the channel
+        import_agora_token.RtcRole.PUBLISHER,
+        privilegeExpiredTs,
+        privilegeExpiredTs
+      );
+    }
+    res.json({
+      success: true,
+      appId: agoraConfig.appId,
+      channelName,
+      token
+    });
+  } catch (err) {
+    console.error("Error generating Agora token:", err);
     res.status(500).json({ error: err.message });
   }
 });
