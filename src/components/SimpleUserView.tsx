@@ -10,7 +10,6 @@ import {
   ShieldCheck,
   Smartphone,
   Copy,
-  Crown,
   Radio,
   Plus,
   BookOpen,
@@ -21,8 +20,35 @@ import {
   LogOut,
   UserPlus,
   Phone,
-  Hash,
   RefreshCw,
+  Settings as SettingsIcon,
+  Moon,
+  Sun,
+  Globe,
+  Bell,
+  Shield,
+  Slash,
+  Disc,
+  Cloud,
+  Info,
+  Volume2,
+  VolumeX,
+  Bluetooth,
+  Grid,
+  Video,
+  Pause,
+  Play,
+  Paperclip,
+  Image as ImageIcon,
+  Smile,
+  QrCode,
+  ChevronRight,
+  ChevronDown,
+  CheckCheck,
+  X,
+  Home as HomeIcon,
+  Sparkles,
+  Share2,
 } from 'lucide-react';
 import { MeshNode, ChatMessage, LanguageMode } from '../types/mesh';
 import { agoraVoiceEngine } from '../lib/agoraCallEngine';
@@ -30,7 +56,28 @@ import { agoraVoiceEngine } from '../lib/agoraCallEngine';
 interface SavedContact {
   id: string;
   name: string;
-  code: string; // 6 digit phone code
+  code: string;
+  avatar?: string;
+  isFavorite?: boolean;
+}
+
+interface RecentCallLog {
+  id: string;
+  name: string;
+  code: string;
+  type: 'INCOMING' | 'OUTGOING' | 'MISSED';
+  time: string;
+  avatar?: string;
+}
+
+interface ConversationItem {
+  id: string;
+  name: string;
+  code: string;
+  lastMsg: string;
+  time: string;
+  unreadCount?: number;
+  avatar?: string;
 }
 
 interface SimpleUserViewProps {
@@ -49,6 +96,15 @@ interface SimpleUserViewProps {
   onSendCallSignal?: (action: 'INITIATE' | 'ACCEPT' | 'REJECT' | 'END', targetId: string, callerName?: string) => void;
   onSendVoiceChunk?: (chunk: { audioData?: string; mimeType?: string; pcmData?: number[]; base64Pcm?: string; sampleRate?: number; senderName: string }) => void;
 }
+
+// Default high quality avatar placeholders
+const DEFAULT_AVATARS = [
+  'https://images.unsplash.com/photo-1534528741775-53994a69daeb?w=150&auto=format&fit=crop&q=80',
+  'https://images.unsplash.com/photo-1507003211169-0a1dd7228f2d?w=150&auto=format&fit=crop&q=80',
+  'https://images.unsplash.com/photo-1494790108377-be9c29b29330?w=150&auto=format&fit=crop&q=80',
+  'https://images.unsplash.com/photo-1500648767791-00dcc994a43e?w=150&auto=format&fit=crop&q=80',
+  'https://images.unsplash.com/photo-1438761681033-6461ffad8d80?w=150&auto=format&fit=crop&q=80',
+];
 
 export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
   nodes,
@@ -83,10 +139,17 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
   );
   const [loginError, setLoginError] = useState<string>('');
 
-  // Main UI Tabs
-  const [activeTab, setActiveTab] = useState<'DIALER' | 'CONTACTS' | 'CHAT'>('DIALER');
+  // Main Bottom Navigation Tabs: HOME | CALLS | CONTACTS | MESSAGES | SETTINGS
+  const [activeTab, setActiveTab] = useState<'HOME' | 'CALLS' | 'CONTACTS' | 'MESSAGES' | 'SETTINGS'>('HOME');
 
-  // Dialer input state
+  // UI Settings
+  const [isDarkMode, setIsDarkMode] = useState<boolean>(() => {
+    return localStorage.getItem('mesh_dark_mode') === 'true';
+  });
+  const [currentLang, setCurrentLang] = useState<'BN' | 'EN'>('BN');
+  const [notificationsEnabled, setNotificationsEnabled] = useState<boolean>(true);
+
+  // Dialer state
   const [dialerNumber, setDialerNumber] = useState<string>('');
 
   // Contacts state
@@ -94,10 +157,9 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
     const saved = localStorage.getItem('mesh_saved_contacts');
     if (saved) {
       try {
-        return JSON.parse(saved);
-      } catch (e) {
-        // fallback
-      }
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) {}
     }
     return [];
   });
@@ -105,25 +167,54 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
   const [newContactName, setNewContactName] = useState<string>('');
   const [newContactCode, setNewContactCode] = useState<string>('');
   const [showAddContactModal, setShowAddContactModal] = useState<boolean>(false);
-  const [contactSearchQuery, setContactSearchQuery] = useState<string>('');
+  const [searchQuery, setSearchQuery] = useState<string>('');
 
-  // Chat Target state
-  const [chatTargetCode, setChatTargetCode] = useState<string>('BROADCAST');
+  // Recent Calls log state
+  const [recentCalls, setRecentCalls] = useState<RecentCallLog[]>(() => {
+    const saved = localStorage.getItem('mesh_recent_calls');
+    if (saved) {
+      try {
+        const parsed = JSON.parse(saved);
+        if (Array.isArray(parsed)) return parsed;
+      } catch (e) {}
+    }
+    return [];
+  });
+
+  useEffect(() => {
+    localStorage.setItem('mesh_recent_calls', JSON.stringify(recentCalls));
+  }, [recentCalls]);
+
+  // Messages / Conversations list
+  const [selectedConversationCode, setSelectedConversationCode] = useState<string | null>(null);
   const [chatInput, setChatInput] = useState<string>('');
 
-  // Call state
+  // Active Call state
   const [activeCall, setActiveCall] = useState<{
     isActive: boolean;
     targetCode: string;
     targetName: string;
     durationSec: number;
     isMuted: boolean;
+    isSpeaker: boolean;
+    isBluetooth: boolean;
+    isHold: boolean;
+    isRecording: boolean;
+    isVideo: boolean;
+    showKeypad: boolean;
+    avatar?: string;
   }>({
     isActive: false,
     targetCode: '',
     targetName: '',
     durationSec: 0,
     isMuted: false,
+    isSpeaker: false,
+    isBluetooth: false,
+    isHold: false,
+    isRecording: false,
+    isVideo: false,
+    showKeypad: false,
   });
 
   const timerRef = useRef<any>(null);
@@ -149,12 +240,16 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
     fetchAgoraConfig();
   }, [fetchAgoraConfig]);
 
-  // Save contacts to localStorage
+  // Save contacts & dark mode
   useEffect(() => {
     localStorage.setItem('mesh_saved_contacts', JSON.stringify(contacts));
   }, [contacts]);
 
-  // DB Users Sync State
+  useEffect(() => {
+    localStorage.setItem('mesh_dark_mode', isDarkMode ? 'true' : 'false');
+  }, [isDarkMode]);
+
+  // DB Users Sync
   const [isSyncingDb, setIsSyncingDb] = useState<boolean>(false);
   const [dbUsersCount, setDbUsersCount] = useState<number>(0);
 
@@ -169,12 +264,13 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
 
         setContacts((prevContacts) => {
           const updated = [...prevContacts];
-          Object.values(dbUsersMap).forEach((u: any) => {
+          Object.values(dbUsersMap).forEach((u: any, idx: number) => {
             if (u.code && !updated.some((c) => c.code === u.code)) {
               updated.push({
                 id: `db-${u.code}`,
                 name: u.name || `User ${u.code}`,
                 code: u.code,
+                avatar: DEFAULT_AVATARS[idx % DEFAULT_AVATARS.length],
               });
             }
           });
@@ -192,7 +288,7 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
     fetchDbUsers();
   }, [fetchDbUsers]);
 
-  // Incoming Call Ringtone Synthesizer Effect (Web Audio API)
+  // Ringtone Synthesizer Effect for Incoming Calls
   useEffect(() => {
     if (incomingCall && !activeCall.isActive) {
       let audioCtx: AudioContext | null = null;
@@ -212,7 +308,6 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
             audioCtx.resume();
           }
 
-          // Dual Frequency Tone (440Hz + 480Hz) Ringtone
           const osc1 = audioCtx.createOscillator();
           const osc2 = audioCtx.createOscillator();
           const gainNode = audioCtx.createGain();
@@ -298,7 +393,7 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
   };
 
   const handleDialerKeyPress = (digit: string) => {
-    if (dialerNumber.length < 6) {
+    if (dialerNumber.length < 12) {
       setDialerNumber((prev) => prev + digit);
     }
   };
@@ -307,193 +402,85 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
     setDialerNumber((prev) => prev.slice(0, -1));
   };
 
-  const handleDialerClear = () => {
-    setDialerNumber('');
-  };
+  const handleStartCall = (targetCode: string, targetName?: string) => {
+    const cleanCode = targetCode.trim();
+    if (!cleanCode) return;
 
-  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
-  const audioStreamRef = useRef<MediaStream | null>(null);
-  const callAudioCtxRef = useRef<AudioContext | null>(null);
-  const callScriptNodeRef = useRef<ScriptProcessorNode | null>(null);
+    const matchedContact = contacts.find((c) => c.code === cleanCode);
+    const finalName = targetName || matchedContact?.name || `Caller ${cleanCode}`;
+    const avatar = matchedContact?.avatar || DEFAULT_AVATARS[0];
 
-  // Live Microphone audio streaming during active call with WebAudio PCM Engine
-  useEffect(() => {
-    if (activeCall.isActive && !activeCall.isMuted) {
-      navigator.mediaDevices?.getUserMedia({
-        audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true }
-      }).then((stream) => {
-        audioStreamRef.current = stream;
+    onSendCallSignal?.('INITIATE', cleanCode, inputName || myNodeId);
 
-        // Set up WebAudio API PCM Audio Processor for pristine voice quality
-        try {
-          const AudioCtx = window.AudioContext || (window as any).webkitAudioContext;
-          if (AudioCtx) {
-            const ctx = new AudioCtx();
-            callAudioCtxRef.current = ctx;
-            const srcNode = ctx.createMediaStreamSource(stream);
-            const scriptNode = ctx.createScriptProcessor(2048, 1, 1);
-            callScriptNodeRef.current = scriptNode;
-
-            let lastSendTime = 0;
-            scriptNode.onaudioprocess = (e) => {
-              const now = Date.now();
-              if (now - lastSendTime >= 120) { // Send chunk every 120ms
-                lastSendTime = now;
-                const channelData = e.inputBuffer.getChannelData(0);
-                if (onSendVoiceChunk && channelData && channelData.length > 0) {
-                  const pcm16 = new Int16Array(channelData.length);
-                  for (let i = 0; i < channelData.length; i++) {
-                    const s = Math.max(-1, Math.min(1, channelData[i]));
-                    pcm16[i] = s < 0 ? s * 0x8000 : s * 0x7FFF;
-                  }
-                  let binary = '';
-                  const bytes = new Uint8Array(pcm16.buffer);
-                  for (let i = 0; i < bytes.byteLength; i++) {
-                    binary += String.fromCharCode(bytes[i]);
-                  }
-                  const base64Pcm = btoa(binary);
-
-                  onSendVoiceChunk({
-                    base64Pcm,
-                    pcmData: Array.from(channelData),
-                    sampleRate: ctx.sampleRate || 44100,
-                    senderName: inputName || myNodeId,
-                  });
-                }
-              }
-            };
-
-            srcNode.connect(scriptNode);
-            scriptNode.connect(ctx.destination);
-          }
-        } catch (pcmErr) {
-          console.warn('PCM capture setup error:', pcmErr);
-        }
-      }).catch((err) => {
-        console.warn('Microphone permission error:', err);
-      });
-    } else {
-      if (callScriptNodeRef.current) {
-        try { callScriptNodeRef.current.disconnect(); } catch (e) {}
-        callScriptNodeRef.current = null;
-      }
-      if (callAudioCtxRef.current) {
-        try { callAudioCtxRef.current.close(); } catch (e) {}
-        callAudioCtxRef.current = null;
-      }
-      if (audioStreamRef.current) {
-        audioStreamRef.current.getTracks().forEach((t) => t.stop());
-        audioStreamRef.current = null;
-      }
-    }
-
-    return () => {
-      if (callScriptNodeRef.current) {
-        try { callScriptNodeRef.current.disconnect(); } catch (e) {}
-        callScriptNodeRef.current = null;
-      }
-      if (callAudioCtxRef.current) {
-        try { callAudioCtxRef.current.close(); } catch (e) {}
-        callAudioCtxRef.current = null;
-      }
-      if (audioStreamRef.current) {
-        audioStreamRef.current.getTracks().forEach((t) => t.stop());
-        audioStreamRef.current = null;
-      }
-    };
-  }, [activeCall.isActive, activeCall.isMuted]);
-
-  const handleStartCall = async (targetCode: string, targetName?: string) => {
-    const matchedNode = nodes.find((n) => n.id === targetCode);
-    const matchedContact = contacts.find((c) => c.code === targetCode);
-
-    const displayName =
-      targetName ||
-      matchedContact?.name ||
-      matchedNode?.name ||
-      `ইউজার (${targetCode})`;
-
-    onSendCallSignal?.('INITIATE', targetCode, inputName || myNodeId);
-
-    // If Agora mode is active, join Agora RTC audio channel
     if (callingEngineMode === 'AGORA') {
-      const channelName = `banglacall_${[inputCode || myNodeId, targetCode].sort().join('_')}`;
+      const channelName = `banglacall_${[inputCode || myNodeId, cleanCode].sort().join('_')}`;
       agoraVoiceEngine.joinAudioChannel(agoraAppId, channelName, inputCode || myNodeId);
     }
 
     setActiveCall({
       isActive: true,
-      targetCode,
-      targetName: displayName,
+      targetCode: cleanCode,
+      targetName: finalName,
       durationSec: 0,
       isMuted: false,
+      isSpeaker: false,
+      isBluetooth: false,
+      isHold: false,
+      isRecording: false,
+      isVideo: false,
+      showKeypad: false,
+      avatar,
     });
+
+    // Add to recent calls
+    setRecentCalls((prev) => [
+      {
+        id: `rc-${Date.now()}`,
+        name: finalName,
+        code: cleanCode,
+        type: 'OUTGOING',
+        time: new Date().toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' }),
+        avatar,
+      },
+      ...prev,
+    ]);
   };
 
-  const handleRejectOrCutCall = async () => {
-    const currentCode = inputCode || myNodeId;
-    const currentName = inputName || currentCode;
-    const targetCode = activeCall.targetCode;
-    const targetName = activeCall.targetName;
-    const duration = activeCall.durationSec;
-
-    if (targetCode) {
-      onSendCallSignal?.('END', targetCode, currentName);
+  const handleRejectOrCutCall = () => {
+    if (activeCall.targetCode) {
+      onSendCallSignal?.('END', activeCall.targetCode, inputName || myNodeId);
     }
-
-    // Leave Agora RTC audio channel if in Agora mode
     if (callingEngineMode === 'AGORA') {
-      await agoraVoiceEngine.leaveAudioChannel();
+      agoraVoiceEngine.leaveAudioChannel();
     }
-
-    // Save call duration history log to server DB
-    if (duration > 0 && targetCode) {
-      try {
-        await fetch('/api/calls/log', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            callId: `call-${Date.now()}`,
-            callerCode: currentCode,
-            callerName: currentName,
-            receiverCode: targetCode,
-            receiverName: targetName,
-            durationSeconds: duration,
-            callMode: callingEngineMode,
-            status: 'COMPLETED',
-          }),
-        });
-      } catch (err) {
-        console.error('Error saving call duration log:', err);
-      }
-    }
-
     setActiveCall({
       isActive: false,
       targetCode: '',
       targetName: '',
       durationSec: 0,
       isMuted: false,
+      isSpeaker: false,
+      isBluetooth: false,
+      isHold: false,
+      isRecording: false,
+      isVideo: false,
+      showKeypad: false,
     });
-  };
-
-  const handleOpenSmsWithNumber = (targetCode: string) => {
-    setChatTargetCode(targetCode);
-    setActiveTab('CHAT');
   };
 
   const handleAddContact = (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newContactName.trim()) return;
-    if (!/^\d{6}$/.test(newContactCode.trim())) return;
+    if (!newContactName.trim() || !newContactCode.trim()) return;
 
-    const newC: SavedContact = {
-      id: Date.now().toString(),
+    const newContact: SavedContact = {
+      id: `c-${Date.now()}`,
       name: newContactName.trim(),
       code: newContactCode.trim(),
+      avatar: DEFAULT_AVATARS[contacts.length % DEFAULT_AVATARS.length],
+      isFavorite: true,
     };
 
-    setContacts((prev) => [...prev.filter((c) => c.code !== newC.code), newC]);
+    setContacts((prev) => [...prev, newContact]);
     setNewContactName('');
     setNewContactCode('');
     setShowAddContactModal(false);
@@ -503,103 +490,143 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
     setContacts((prev) => prev.filter((c) => c.id !== id));
   };
 
-  const handleSendChat = (e?: React.FormEvent) => {
-    if (e) e.preventDefault();
-    if (!chatInput.trim()) return;
-    onSendMessage(chatTargetCode, chatInput.trim());
+  const handleOpenSmsWithNumber = (code: string) => {
+    setSelectedConversationCode(code);
+    setActiveTab('MESSAGES');
+  };
+
+  const handleSendChat = (e: React.FormEvent) => {
+    e.preventDefault();
+    if (!chatInput.trim() || !selectedConversationCode) return;
+    onSendMessage(selectedConversationCode, chatInput.trim());
     setChatInput('');
   };
 
-  const handleQuickSms = (template: string) => {
-    onSendMessage(chatTargetCode, template);
+  // Helper formatting for call timer
+  const formatTimer = (secs: number) => {
+    const hrs = Math.floor(secs / 3600);
+    const mins = Math.floor((secs % 3600) / 60);
+    const s = secs % 60;
+    if (hrs > 0) {
+      return `${hrs.toString().padStart(2, '0')}:${mins.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
+    }
+    return `${mins.toString().padStart(2, '0')}:${s.toString().padStart(2, '0')}`;
   };
 
-  const selfNode = nodes.find((n) => n.id === myNodeId);
-  const currentUserCode = localStorage.getItem('mesh_user_code') || myNodeId;
-  const currentUserName = localStorage.getItem('mesh_user_name') || selfNode?.name || 'User';
-
-  const relayLink = `${window.location.origin}?mode=relay`;
-  const [copiedLink, setCopiedLink] = useState(false);
-
-  const copyRelayLink = () => {
-    navigator.clipboard.writeText(relayLink);
-    setCopiedLink(true);
-    setTimeout(() => setCopiedLink(false), 2000);
-  };
-
-  // Filtered contacts and nodes
-  const filteredContacts = contacts.filter(
-    (c) =>
-      c.name.toLowerCase().includes(contactSearchQuery.toLowerCase()) ||
-      c.code.includes(contactSearchQuery)
-  );
+  const currentUserName = inputName || 'Mesh User';
+  const currentUserCode = inputCode || '123456';
 
   const registeredUsersInMesh = nodes.filter(
-    (n) => n.type === 'MOBILE_USER' && n.id !== currentUserCode
+    (n) => n.id !== myNodeId && n.id !== inputCode
   );
 
-  // IF NOT LOGGED IN - SHOW CLEAN 6-DIGIT CODE LOGIN / REGISTRATION CARD
+  const filteredContacts = contacts.filter(
+    (c) =>
+      c.name.toLowerCase().includes(searchQuery.toLowerCase()) ||
+      c.code.includes(searchQuery)
+  );
+
+  // Dynamic conversation items derived from actual messages and contacts
+  const conversationsList: ConversationItem[] = React.useMemo(() => {
+    const convMap: Record<
+      string,
+      { lastMsg: string; time: string; timestamp: number; unreadCount: number; name: string; avatar?: string }
+    > = {};
+
+    messages.forEach((m) => {
+      const partnerCode = m.isSelf ? m.targetId : m.senderId;
+      if (!partnerCode || partnerCode === 'BROADCAST') return;
+
+      const matchedContact = contacts.find((c) => c.code === partnerCode);
+      const name = m.isSelf
+        ? matchedContact?.name || `User ${partnerCode}`
+        : m.senderName || matchedContact?.name || `User ${partnerCode}`;
+
+      const charCodeSum = partnerCode.split('').reduce((acc, c) => acc + c.charCodeAt(0), 0);
+      const avatar =
+        matchedContact?.avatar || DEFAULT_AVATARS[charCodeSum % DEFAULT_AVATARS.length];
+      const timeStr = new Date(m.timestamp).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+
+      if (!convMap[partnerCode] || m.timestamp > convMap[partnerCode].timestamp) {
+        convMap[partnerCode] = {
+          lastMsg: m.type === 'VOICE' ? '🎙️ ভয়েস মেসেজ' : m.content,
+          time: timeStr,
+          timestamp: m.timestamp,
+          unreadCount: m.isSelf ? 0 : 1,
+          name,
+          avatar,
+        };
+      }
+    });
+
+    return Object.entries(convMap).map(([code, val]) => ({
+      id: `conv-${code}`,
+      name: val.name,
+      code,
+      lastMsg: val.lastMsg,
+      time: val.time,
+      unreadCount: val.unreadCount,
+      avatar: val.avatar,
+    }));
+  }, [messages, contacts]);
+
+  // Colors based on Light / Dark mode
+  const bgClass = isDarkMode ? 'bg-[#0f1117] text-white' : 'bg-[#f4f5fa] text-slate-900';
+  const cardBgClass = isDarkMode ? 'bg-[#1a1d26] border-[#2a2e3d]' : 'bg-white border-slate-200 shadow-sm';
+  const subTextClass = isDarkMode ? 'text-slate-400' : 'text-slate-500';
+
+  // LOGIN SCREEN
   if (!isLoggedIn) {
     return (
-      <div className="max-w-md mx-auto my-6 p-4 font-mono text-white">
-        <div className="bg-[#14161B] border-2 border-[#00FF9C] p-6 shadow-[0_0_40px_rgba(0,255,156,0.2)] rounded space-y-6">
-          <div className="text-center space-y-2 border-b border-[#2D3139] pb-4">
-            <div className="w-16 h-16 bg-[#00FF9C]/10 border-2 border-[#00FF9C] rounded-full mx-auto flex items-center justify-center text-[#00FF9C] shadow-lg">
-              <Smartphone className="w-8 h-8 animate-pulse" />
+      <div className={`min-h-screen flex items-center justify-center p-4 font-sans ${bgClass}`}>
+        <div className={`w-full max-w-md p-6 rounded-2xl border ${cardBgClass} space-y-6 shadow-2xl`}>
+          <div className="text-center space-y-2">
+            <div className="w-16 h-16 bg-blue-600/10 border-2 border-blue-500 rounded-2xl flex items-center justify-center mx-auto text-blue-600">
+              <PhoneCall className="w-8 h-8" />
             </div>
-            <h2 className="text-lg font-extrabold text-white uppercase tracking-wide">
-              📱 অফ-গ্রিড মেস নেটওয়ার্ক
-            </h2>
-            <p className="text-xs text-[#8A909D]">
-              ইউজার হিসেবে প্রবেশ করতে আপনার নাম এবং বরাদ্দকৃত ৬ সংখ্যার ইউনিক কোড দিন।
+            <h1 className="text-2xl font-black tracking-tight">BanglaCall HD</h1>
+            <p className="text-xs text-slate-500">
+              অফ-গ্রিড মেস তরঙ্গ ও আগোরা ভয়েস নেটওয়ার্কে সাইন ইন করুন
             </p>
           </div>
 
-          <form onSubmit={handleLoginSubmit} className="space-y-4">
-            {(loginError || authError) && (
-              <div className="bg-rose-950/80 border border-rose-500 text-rose-200 text-xs p-3 rounded font-bold space-y-1">
-                <div>⚠️ {loginError || authError}</div>
-              </div>
-            )}
+          {loginError && (
+            <div className="p-3 bg-rose-500/10 border border-rose-500/30 text-rose-600 text-xs rounded-xl font-medium">
+              {loginError}
+            </div>
+          )}
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-[#00FF9C] uppercase flex items-center gap-1.5">
-                <User className="w-4 h-4" />
-                <span>আপনার নাম (Name):</span>
-              </label>
+          <form onSubmit={handleLoginSubmit} className="space-y-4">
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-600 dark:text-slate-300">আপনার নাম:</label>
               <input
                 type="text"
-                placeholder="যেমন: রহিম আহমেদ"
+                placeholder="যেমন: সাব্বির আহমেদ"
                 value={inputName}
                 onChange={(e) => setInputName(e.target.value)}
-                className="w-full bg-[#0E1014] border border-[#2D3139] focus:border-[#00FF9C] text-white px-3 py-2.5 text-sm rounded focus:outline-none font-bold"
+                className="w-full px-4 py-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500"
                 required
               />
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-[#00FF9C] uppercase flex items-center gap-1.5">
-                <Hash className="w-4 h-4" />
-                <span>আপনার ৬ সংখ্যার ফোন নাম্বার / কোড:</span>
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                ৬ সংখ্যার ইউনিক ফোন নম্বর কোড:
               </label>
               <input
                 type="text"
                 maxLength={6}
-                placeholder="যেমন: 882910"
+                placeholder="যেমন: 123456"
                 value={inputCode}
                 onChange={(e) => setInputCode(e.target.value.replace(/\D/g, ''))}
-                className="w-full bg-[#0E1014] border border-[#2D3139] focus:border-[#00FF9C] text-[#00FF9C] tracking-widest text-center text-lg font-extrabold px-3 py-2.5 rounded focus:outline-none"
+                className="w-full px-4 py-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-lg font-bold tracking-widest text-center text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500"
                 required
               />
-              <p className="text-[10px] text-[#8A909D]">
-                * এই ৬ সংখ্যার কোডটি আপনার অনন্য ফোন নম্বর। কল বা মেসেজ গ্রহণের জন্য এটি ব্যবহৃত হবে।
-              </p>
             </div>
 
-            <div className="space-y-1.5">
-              <label className="text-xs font-bold text-[#00FF9C] uppercase flex items-center gap-1.5">
-                <Lock className="w-4 h-4" />
-                <span>আপনার ৪ সংখ্যার সিকিউরিটি পিন (Security PIN):</span>
+            <div className="space-y-1">
+              <label className="text-xs font-bold text-slate-600 dark:text-slate-300">
+                ৪ সংখ্যার সিকিউরিটি পিন:
               </label>
               <input
                 type="password"
@@ -607,678 +634,958 @@ export const SimpleUserView: React.FC<SimpleUserViewProps> = ({
                 placeholder="যেমন: 1234"
                 value={inputPin}
                 onChange={(e) => setInputPin(e.target.value.replace(/\D/g, ''))}
-                className="w-full bg-[#0E1014] border border-[#2D3139] focus:border-[#00FF9C] text-[#00FF9C] tracking-widest text-center text-lg font-extrabold px-3 py-2.5 rounded focus:outline-none"
+                className="w-full px-4 py-3 rounded-xl bg-slate-100 dark:bg-slate-800 border border-slate-200 dark:border-slate-700 text-lg font-bold tracking-widest text-center focus:outline-none focus:ring-2 focus:ring-blue-500"
                 required
               />
-              <p className="text-[10px] text-[#8A909D]">
-                🔒 পিন প্রোটেকশন: এই পিন কোডটি অন্য কেউ আপনার নম্বরটি ব্যবহারের চেষ্টা করলে বাধা দেবে।
-              </p>
             </div>
 
             <button
               type="submit"
-              className="w-full py-3.5 bg-[#00FF9C] hover:bg-[#00FF9C]/90 text-black font-extrabold text-sm uppercase flex items-center justify-center gap-2 rounded shadow-[0_0_20px_rgba(0,255,156,0.4)] transition-all cursor-pointer"
+              className="w-full py-3.5 bg-blue-600 hover:bg-blue-700 text-white font-bold rounded-xl shadow-lg shadow-blue-500/30 transition-all flex items-center justify-center gap-2 text-sm"
             >
               <CheckCircle2 className="w-5 h-5" />
-              <span>নেটওয়ার্কে সাইন ইন করুন</span>
+              <span>নেটওয়ার্কে প্রবেশ করুন</span>
             </button>
           </form>
-
-          <div className="bg-[#0E1014] p-3 border border-[#2D3139] rounded text-[11px] text-[#8A909D] space-y-1">
-            <span className="font-bold text-[#00FF9C] flex items-center gap-1">
-              <ShieldCheck className="w-3.5 h-3.5" />
-              <span>নিরাপদ ও স্থায়ী ডেটা সুরক্ষা:</span>
-            </span>
-            <p>• আপনার রেজিস্টার্ড নম্বর ও পিন কোড সার্ভারে স্থায়ীভাবে সংরক্ষিত থাকবে।</p>
-            <p>• সঠিক পিন কোড ছাড়া অন্য কেউ আপনার নাম্বারে লগইন করতে পারবে না।</p>
-            <p>• সিম কার্ড বা সাধারণ মোবাইল নেটওয়ার্ক ছাড়াও মেস তরঙ্গে এটি কাজ করবে।</p>
-          </div>
         </div>
       </div>
     );
   }
 
   return (
-    <div className="max-w-4xl mx-auto space-y-4 font-mono text-white p-2 sm:p-4">
-      {/* Active User WhatsApp/Imo Style Clean Header */}
-      <div className="bg-[#14161B] border border-[#2D3139] p-4 flex flex-col sm:flex-row items-center justify-between gap-3 shadow-xl rounded">
-        <div className="flex items-center gap-3">
-          <div className="w-12 h-12 bg-[#00FF9C]/10 border-2 border-[#00FF9C] rounded-full flex items-center justify-center text-[#00FF9C] shadow-[0_0_15px_rgba(0,255,156,0.2)]">
-            <Smartphone className="w-6 h-6 animate-pulse" />
+    <div className={`min-h-screen font-sans pb-24 ${bgClass}`}>
+      {/* Mobile Frame Container */}
+      <div className="max-w-md mx-auto min-h-screen flex flex-col justify-between relative shadow-2xl bg-inherit">
+        
+        {/* iOS Dynamic Island & Status Bar Top */}
+        <div className="pt-3 px-6 pb-2 flex items-center justify-between text-xs font-bold opacity-80 select-none">
+          <span>9:41</span>
+          <div className="w-24 h-5 bg-black rounded-full flex items-center justify-center">
+            <div className="w-2 h-2 rounded-full bg-slate-800" />
           </div>
-          <div>
+          <div className="flex items-center gap-1.5">
+            <span className="text-[10px]">5G</span>
+            <div className="w-5 h-2.5 border border-current rounded-xs p-0.5 flex items-center">
+              <div className="w-full h-full bg-current rounded-2xs" />
+            </div>
+          </div>
+        </div>
+
+        {/* Global Engine Switcher Banner */}
+        <div className="px-4 py-1.5">
+          <div className="p-2.5 rounded-xl bg-blue-600/10 border border-blue-500/30 flex items-center justify-between text-xs">
             <div className="flex items-center gap-2">
-              <span className="text-[10px] bg-[#00FF9C]/20 text-[#00FF9C] border border-[#00FF9C]/40 px-2 py-0.5 rounded font-extrabold uppercase">
-                📱 সক্রিয় মেস একাউন্ট
-              </span>
-              <span className="text-xs text-[#00FF9C] font-extrabold flex items-center gap-1">
-                <span className="w-2 h-2 rounded-full bg-[#00FF9C] animate-ping" />
-                অনলাইন
+              <Radio className="w-4 h-4 text-blue-500 animate-pulse" />
+              <span className="font-semibold text-blue-600 dark:text-blue-400">
+                {callingEngineMode === 'AGORA' ? 'AGORA HD VOICE ACTIVE' : 'MESH PCM OFFLINE'}
               </span>
             </div>
-            <h2 className="text-base font-extrabold text-white mt-1">
-              {currentUserName}{' '}
-              <span className="text-[#00FF9C] font-mono tracking-wider bg-[#00FF9C]/10 px-2 py-0.5 border border-[#00FF9C]/30 rounded text-sm">
-                [{currentUserCode}]
-              </span>
-            </h2>
+            <button
+              onClick={() => setCallingEngineMode((prev) => (prev === 'AGORA' ? 'MESH_PCM' : 'AGORA'))}
+              className="px-2.5 py-1 bg-blue-600 text-white text-[10px] font-bold rounded-lg shadow-sm hover:bg-blue-700 cursor-pointer"
+            >
+              {callingEngineMode === 'AGORA' ? 'Switch to Mesh PCM' : 'Switch to Agora'}
+            </button>
           </div>
         </div>
 
-        {/* Clean Profile & Logout Actions */}
-        <div className="flex items-center gap-2">
-          <div className="hidden sm:flex items-center gap-1 text-[11px] text-[#00FF9C] bg-[#0E1014] border border-[#00FF9C]/30 px-2.5 py-1 rounded">
-            <Lock className="w-3.5 h-3.5" />
-            <span>পিন সুরক্ষিত</span>
-          </div>
+        {/* MAIN BODY CONTENT BASED ON ACTIVE TAB */}
+        <div className="flex-1 px-4 py-2 space-y-4 overflow-y-auto">
 
-          <button
-            onClick={handleLogout}
-            className="px-3.5 py-1.5 bg-rose-950/40 hover:bg-rose-900/60 text-rose-300 border border-rose-500/50 text-xs font-bold uppercase flex items-center justify-center gap-1.5 cursor-pointer rounded transition-all"
-            title="লগআউট করে অ্যাকাউন্ট পরিবর্তন করুন"
-          >
-            <LogOut className="w-3.5 h-3.5" />
-            <span>লগআউট</span>
-          </button>
+          {/* TAB 1: HOME (Image 6) */}
+          {activeTab === 'HOME' && (
+            <div className="space-y-5">
+              {/* Top Search Bar */}
+              <div className="relative">
+                <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search for contacts"
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className={`w-full pl-10 pr-4 py-2.5 rounded-2xl text-sm border focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                    isDarkMode ? 'bg-slate-800/80 border-slate-700 text-white' : 'bg-slate-200/60 border-slate-300 text-slate-900'
+                  }`}
+                />
+              </div>
+
+              {/* Favorite Contacts Horizontal Row (Image 6) */}
+              <div className="space-y-2">
+                <h3 className="text-base font-bold tracking-tight">Favorite Contacts</h3>
+                {contacts.length === 0 ? (
+                  <div className={`p-4 rounded-2xl border text-center text-xs ${subTextClass} ${cardBgClass}`}>
+                    কোনো প্রিয় কন্টাক্ট সেভ করা নেই। "Contacts" ট্যাবে গিয়ে নতুন নম্বর যোগ করুন।
+                  </div>
+                ) : (
+                  <div className="flex gap-3 overflow-x-auto pb-2 scrollbar-none">
+                    {contacts.map((contact) => (
+                      <div
+                        key={contact.id}
+                        onClick={() => handleStartCall(contact.code, contact.name)}
+                        className={`min-w-[90px] p-3 rounded-2xl border text-center flex flex-col items-center gap-1.5 cursor-pointer hover:scale-105 transition-all ${cardBgClass}`}
+                      >
+                        <div className="relative">
+                          <img
+                            src={contact.avatar || DEFAULT_AVATARS[0]}
+                            alt={contact.name}
+                            className="w-14 h-14 rounded-full object-cover border-2 border-blue-500/30"
+                          />
+                          <span className="w-3.5 h-3.5 rounded-full bg-emerald-500 border-2 border-white absolute bottom-0 right-0" />
+                        </div>
+                        <span className="font-bold text-xs truncate max-w-[70px]">{contact.name}</span>
+                        <span className="text-[10px] text-slate-400">Contacts</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+
+              {/* Recent Calls Section (Image 6) */}
+              <div className="space-y-2">
+                <h3 className="text-base font-bold tracking-tight">Recent Calls</h3>
+                {recentCalls.length === 0 ? (
+                  <div className={`p-4 rounded-2xl border text-center text-xs ${subTextClass} ${cardBgClass}`}>
+                    কোনো সাম্প্রতিক কল রেকর্ড নেই।
+                  </div>
+                ) : (
+                  <div className="space-y-2">
+                    {recentCalls.map((log) => (
+                      <div
+                        key={log.id}
+                        onClick={() => handleStartCall(log.code, log.name)}
+                        className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer hover:opacity-90 transition-all ${cardBgClass}`}
+                      >
+                        <div className="flex items-center gap-3">
+                          <div
+                            className={`w-10 h-10 rounded-full flex items-center justify-center text-white ${
+                              log.type === 'INCOMING'
+                                ? 'bg-emerald-600'
+                                : log.type === 'MISSED'
+                                ? 'bg-rose-600'
+                                : 'bg-blue-600'
+                            }`}
+                          >
+                            <PhoneCall className="w-5 h-5" />
+                          </div>
+                          <div>
+                            <h4 className="font-bold text-sm">{log.name}</h4>
+                            <span className="text-xs text-slate-400 flex items-center gap-1">
+                              <Phone className="w-3 h-3" /> Call
+                            </span>
+                          </div>
+                        </div>
+                        <span className="text-xs font-semibold text-slate-400">{log.time}</span>
+                      </div>
+                    ))}
+                  </div>
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 2: CALLS / KEYPAD DIALER (Image 5) */}
+          {activeTab === 'CALLS' && (
+            <div className="space-y-5 flex flex-col justify-between h-full pt-2">
+              {/* Top Quick Actions */}
+              <div className="flex items-center justify-center gap-3">
+                <button
+                  onClick={() => setShowAddContactModal(true)}
+                  className={`px-4 py-2.5 rounded-2xl border font-semibold text-xs flex items-center gap-2 cursor-pointer ${cardBgClass}`}
+                >
+                  <UserPlus className="w-4 h-4 text-blue-500" />
+                  <span>Add Contact</span>
+                </button>
+                <button
+                  onClick={async () => {
+                    try {
+                      const text = await navigator.clipboard.readText();
+                      if (text) setDialerNumber(text.replace(/\D/g, '').slice(0, 10));
+                    } catch (e) {}
+                  }}
+                  className={`px-4 py-2.5 rounded-2xl border font-semibold text-xs flex items-center gap-2 cursor-pointer ${cardBgClass}`}
+                >
+                  <Copy className="w-4 h-4 text-blue-500" />
+                  <span>Paste Number</span>
+                </button>
+              </div>
+
+              {/* Number Display Screen */}
+              <div className="text-center py-4">
+                <div className="text-4xl font-extrabold tracking-widest min-h-[48px] flex items-center justify-center text-blue-600 dark:text-blue-400">
+                  {dialerNumber || <span className="text-slate-300 dark:text-slate-700">______</span>}
+                </div>
+              </div>
+
+              {/* Clean Keypad Grid */}
+              <div className="grid grid-cols-3 gap-4 max-w-xs mx-auto w-full">
+                {[
+                  { num: '1', sub: '' },
+                  { num: '2', sub: 'ABC' },
+                  { num: '3', sub: 'DEF' },
+                  { num: '4', sub: 'GHI' },
+                  { num: '5', sub: 'JKL' },
+                  { num: '6', sub: 'MNO' },
+                  { num: '7', sub: 'PQRS' },
+                  { num: '8', sub: 'TUV' },
+                  { num: '9', sub: 'WXYZ' },
+                  { num: '*', sub: '' },
+                  { num: '0', sub: '+' },
+                  { num: '#', sub: '' },
+                ].map((item) => (
+                  <button
+                    key={item.num}
+                    onClick={() => handleDialerKeyPress(item.num)}
+                    className={`w-16 h-16 mx-auto rounded-full border flex flex-col items-center justify-center cursor-pointer hover:bg-blue-500/10 active:scale-95 transition-all ${cardBgClass}`}
+                  >
+                    <span className="text-2xl font-bold leading-none">{item.num}</span>
+                    {item.sub && <span className="text-[9px] text-slate-400 font-semibold">{item.sub}</span>}
+                  </button>
+                ))}
+              </div>
+
+              {/* Bottom Action Controls */}
+              <div className="flex items-center justify-center gap-6 pt-4 relative">
+                <button
+                  onClick={() => handleStartCall(dialerNumber)}
+                  disabled={!dialerNumber}
+                  className="w-16 h-16 rounded-full bg-emerald-500 hover:bg-emerald-600 disabled:opacity-40 text-white flex items-center justify-center shadow-lg shadow-emerald-500/30 cursor-pointer active:scale-95 transition-all"
+                >
+                  <PhoneCall className="w-8 h-8" />
+                </button>
+
+                {dialerNumber && (
+                  <button
+                    onClick={handleDialerBackspace}
+                    className="p-3 rounded-full hover:bg-slate-200 dark:hover:bg-slate-800 text-slate-500 cursor-pointer"
+                  >
+                    <X className="w-6 h-6" />
+                  </button>
+                )}
+
+                <button
+                  onClick={() => setShowAddContactModal(true)}
+                  className="w-10 h-10 rounded-2xl bg-blue-600 text-white flex items-center justify-center absolute right-2 bottom-2 shadow-md hover:bg-blue-700 cursor-pointer"
+                >
+                  <Plus className="w-6 h-6" />
+                </button>
+              </div>
+            </div>
+          )}
+
+          {/* TAB 3: CONTACTS */}
+          {activeTab === 'CONTACTS' && (
+            <div className="space-y-4">
+              <div className="flex items-center justify-between">
+                <h3 className="text-xl font-bold">Contacts</h3>
+                <button
+                  onClick={() => setShowAddContactModal(true)}
+                  className="px-3 py-1.5 bg-blue-600 text-white text-xs font-bold rounded-xl flex items-center gap-1 cursor-pointer"
+                >
+                  <UserPlus className="w-4 h-4" /> Add New
+                </button>
+              </div>
+
+              {/* Contacts Search Bar */}
+              <div className="relative">
+                <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
+                <input
+                  type="text"
+                  placeholder="Search contacts..."
+                  value={searchQuery}
+                  onChange={(e) => setSearchQuery(e.target.value)}
+                  className={`w-full pl-10 pr-4 py-2.5 rounded-2xl text-sm border focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                    isDarkMode ? 'bg-slate-800/80 border-slate-700 text-white' : 'bg-slate-200/60 border-slate-300 text-slate-900'
+                  }`}
+                />
+              </div>
+
+              <div className="space-y-2">
+                {filteredContacts.length === 0 ? (
+                  <div className={`p-8 rounded-2xl border text-center space-y-2 ${subTextClass} ${cardBgClass}`}>
+                    <User className="w-10 h-10 mx-auto text-slate-400 opacity-60" />
+                    <p className="text-sm font-semibold">কোনো কন্টাক্ট সেভ করা নেই</p>
+                    <p className="text-xs">নতুন কন্টাক্ট সেভ করতে উপরের "+ Add New" বাটনে চাপুন</p>
+                  </div>
+                ) : (
+                  filteredContacts.map((c) => (
+                    <div
+                      key={c.id}
+                      className={`p-3 rounded-2xl border flex items-center justify-between ${cardBgClass}`}
+                    >
+                      <div className="flex items-center gap-3">
+                        <img
+                          src={c.avatar || DEFAULT_AVATARS[0]}
+                          alt={c.name}
+                          className="w-11 h-11 rounded-full object-cover"
+                        />
+                        <div>
+                          <h4 className="font-bold text-sm">{c.name}</h4>
+                          <span className="text-xs text-blue-500 font-semibold">{c.code}</span>
+                        </div>
+                      </div>
+
+                      <div className="flex items-center gap-2">
+                        <button
+                          onClick={() => handleStartCall(c.code, c.name)}
+                          className="p-2 bg-emerald-500 text-white rounded-full hover:bg-emerald-600 cursor-pointer"
+                        >
+                          <PhoneCall className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleOpenSmsWithNumber(c.code)}
+                          className="p-2 bg-blue-500 text-white rounded-full hover:bg-blue-600 cursor-pointer"
+                        >
+                          <MessageSquare className="w-4 h-4" />
+                        </button>
+                        <button
+                          onClick={() => handleDeleteContact(c.id)}
+                          className="p-2 text-rose-500 hover:bg-rose-500/10 rounded-full cursor-pointer"
+                        >
+                          <Delete className="w-4 h-4" />
+                        </button>
+                      </div>
+                    </div>
+                  ))
+                )}
+              </div>
+            </div>
+          )}
+
+          {/* TAB 4: MESSAGES (Image 2) */}
+          {activeTab === 'MESSAGES' && (
+            <div className="space-y-4">
+              {!selectedConversationCode ? (
+                <>
+                  {/* Messages Top Header with Badge & New Chat (Image 2) */}
+                  <div className="flex items-center justify-between pt-1">
+                    <div className="flex items-center gap-2">
+                      <h2 className="text-2xl font-black tracking-tight">Messages</h2>
+                      <span className="w-6 h-6 rounded-lg bg-blue-600 text-white text-xs font-bold flex items-center justify-center">
+                        {conversationsList.length}
+                      </span>
+                    </div>
+                    <button
+                      onClick={() => {
+                        if (contacts.length > 0) setSelectedConversationCode(contacts[0].code);
+                      }}
+                      className="p-2 rounded-xl bg-blue-600/10 text-blue-600 hover:bg-blue-600/20 cursor-pointer"
+                    >
+                      <MessageSquare className="w-5 h-5" />
+                    </button>
+                  </div>
+
+                  {/* Messages Search Bar */}
+                  <div className="relative">
+                    <Search className="w-4 h-4 absolute left-3.5 top-3 text-slate-400" />
+                    <input
+                      type="text"
+                      placeholder="Search"
+                      className={`w-full pl-10 pr-4 py-2.5 rounded-2xl text-sm border focus:outline-none focus:ring-2 focus:ring-blue-500 ${
+                        isDarkMode ? 'bg-slate-800/80 border-slate-700 text-white' : 'bg-slate-200/60 border-slate-300 text-slate-900'
+                      }`}
+                    />
+                  </div>
+
+                  {/* Conversation List (Image 2) */}
+                  <div className="space-y-2">
+                    {conversationsList.length === 0 ? (
+                      <div className={`p-8 rounded-2xl border text-center space-y-2 ${subTextClass} ${cardBgClass}`}>
+                        <MessageSquare className="w-10 h-10 mx-auto text-slate-400 opacity-60" />
+                        <p className="text-sm font-semibold">কোনো মেসেজ হিস্ট্রি বা চ্যাট নেই</p>
+                        <p className="text-xs">নতুন বার্তা পাঠাতে "Contacts" বা ডায়াল প্যাড ব্যবহার করুন</p>
+                      </div>
+                    ) : (
+                      conversationsList.map((conv) => (
+                        <div
+                          key={conv.id}
+                          onClick={() => setSelectedConversationCode(conv.code)}
+                          className={`p-3 rounded-2xl border flex items-center justify-between cursor-pointer hover:opacity-90 transition-all ${cardBgClass}`}
+                        >
+                          <div className="flex items-center gap-3">
+                            <img
+                              src={conv.avatar}
+                              alt={conv.name}
+                              className="w-12 h-12 rounded-full object-cover"
+                            />
+                            <div>
+                              <h4 className="font-bold text-sm">{conv.name}</h4>
+                              <p className="text-xs text-slate-400 flex items-center gap-1">
+                                <CheckCheck className="w-3.5 h-3.5 text-amber-500" />
+                                <span>{conv.lastMsg}</span>
+                              </p>
+                            </div>
+                          </div>
+
+                          <div className="flex flex-col items-end gap-1">
+                            <span className="text-[10px] text-slate-400 font-semibold">{conv.time}</span>
+                            {conv.unreadCount ? (
+                              <span className="w-5 h-5 rounded-full bg-blue-600 text-white text-[10px] font-bold flex items-center justify-center">
+                                {conv.unreadCount}
+                              </span>
+                            ) : null}
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+                </>
+              ) : (
+                /* Selected Active Messaging Chat Screen */
+                <div className="flex flex-col h-[75vh] justify-between">
+                  {/* Active Chat Header */}
+                  <div className={`p-3 rounded-2xl border flex items-center justify-between ${cardBgClass}`}>
+                    <div className="flex items-center gap-2">
+                      <button
+                        onClick={() => setSelectedConversationCode(null)}
+                        className="p-1 rounded-lg text-blue-500 font-bold text-xs"
+                      >
+                        ← Back
+                      </button>
+                      <h4 className="font-bold text-sm">
+                        {contacts.find((c) => c.code === selectedConversationCode)?.name || `User ${selectedConversationCode}`}
+                      </h4>
+                    </div>
+                    <button
+                      onClick={() => handleStartCall(selectedConversationCode)}
+                      className="p-2 bg-emerald-500 text-white rounded-full hover:bg-emerald-600 cursor-pointer"
+                    >
+                      <PhoneCall className="w-4 h-4" />
+                    </button>
+                  </div>
+
+                  {/* Messages Stream */}
+                  <div className="flex-1 overflow-y-auto py-3 space-y-3">
+                    {messages.length === 0 ? (
+                      <div className="text-center text-xs text-slate-400 pt-10">
+                        এখনো কোনো চ্যাট বার্তা নেই। নিচে টাইপ করে পাঠান।
+                      </div>
+                    ) : (
+                      messages.map((m) => (
+                        <div
+                          key={m.id}
+                          className={`flex ${m.isSelf ? 'justify-end' : 'justify-start'}`}
+                        >
+                          <div
+                            className={`max-w-[75%] p-3 rounded-2xl text-xs font-medium ${
+                              m.isSelf
+                                ? 'bg-blue-600 text-white rounded-br-none'
+                                : 'bg-slate-200 dark:bg-slate-800 text-slate-900 dark:text-white rounded-bl-none'
+                            }`}
+                          >
+                            <p>{m.content}</p>
+                            <span className="text-[9px] opacity-70 block text-right mt-1">
+                              {new Date(m.timestamp).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}
+                            </span>
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {/* Bottom Messaging Waveform Bar (Image 2) */}
+                  <form onSubmit={handleSendChat} className="flex items-center gap-2 pt-2">
+                    <button type="button" className="p-2 text-slate-400 hover:text-blue-500">
+                      <ImageIcon className="w-5 h-5" />
+                    </button>
+                    <button type="button" className="p-2 text-slate-400 hover:text-blue-500">
+                      <Paperclip className="w-5 h-5" />
+                    </button>
+                    
+                    <div className="flex-1 bg-slate-200 dark:bg-slate-800 rounded-full px-3 py-1.5 flex items-center gap-2 border border-slate-300 dark:border-slate-700">
+                      <Mic className="w-4 h-4 text-blue-500" />
+                      <input
+                        type="text"
+                        placeholder="Say or type..."
+                        value={chatInput}
+                        onChange={(e) => setChatInput(e.target.value)}
+                        className="bg-transparent border-none text-xs w-full focus:outline-none"
+                      />
+                      <Smile className="w-4 h-4 text-amber-500" />
+                    </div>
+
+                    <button
+                      type="submit"
+                      className="p-3 bg-blue-600 hover:bg-blue-700 text-white rounded-full cursor-pointer shadow-md"
+                    >
+                      <Send className="w-4 h-4" />
+                    </button>
+                  </form>
+                </div>
+              )}
+            </div>
+          )}
+
+          {/* TAB 5: SETTINGS & PROFILE (Image 1) */}
+          {activeTab === 'SETTINGS' && (
+            <div className="space-y-4">
+              {/* Profile Top Card (Image 1) */}
+              <div className={`p-4 rounded-3xl border flex items-center justify-between ${cardBgClass}`}>
+                <div className="flex items-center gap-3">
+                  <div className="relative">
+                    <img
+                      src={DEFAULT_AVATARS[0]}
+                      alt="User photo"
+                      className="w-16 h-16 rounded-full object-cover border-2 border-blue-500"
+                    />
+                    <CheckCircle2 className="w-5 h-5 text-emerald-500 bg-white dark:bg-slate-900 rounded-full absolute bottom-0 right-0" />
+                  </div>
+                  <div>
+                    <h2 className="text-lg font-bold">{currentUserName}</h2>
+                    <p className="text-xs text-slate-500">Phone {currentUserCode}</p>
+                  </div>
+                </div>
+
+                <button
+                  onClick={handleLogout}
+                  className="p-2 rounded-xl bg-rose-500/10 text-rose-500 hover:bg-rose-500/20 cursor-pointer"
+                  title="Logout"
+                >
+                  <LogOut className="w-5 h-5" />
+                </button>
+              </div>
+
+              {/* Unique QR Code Card (Image 1) */}
+              <div className={`p-5 rounded-3xl border text-center space-y-3 ${cardBgClass}`}>
+                <h3 className="font-bold text-sm">Unique QR Code</h3>
+                <div className="p-4 bg-white rounded-2xl inline-block border border-slate-200 shadow-inner">
+                  {/* Generated QR Code SVG representing User Code */}
+                  <svg className="w-36 h-36 mx-auto" viewBox="0 0 100 100">
+                    <rect x="0" y="0" width="100" height="100" fill="#ffffff" />
+                    <path
+                      d="M10 10 h30 v30 h-30 z M15 15 h20 v20 h-20 z M20 20 h10 v10 h-10 z"
+                      fill="#000000"
+                    />
+                    <path
+                      d="M60 10 h30 v30 h-30 z M65 15 h20 v20 h-20 z M70 20 h10 v10 h-10 z"
+                      fill="#000000"
+                    />
+                    <path
+                      d="M10 60 h30 v30 h-30 z M15 65 h20 v20 h-20 z M20 70 h10 v10 h-10 z"
+                      fill="#000000"
+                    />
+                    {/* Interior QR Code matrix pattern */}
+                    <rect x="45" y="15" width="8" height="8" fill="#000" />
+                    <rect x="45" y="30" width="8" height="8" fill="#000" />
+                    <rect x="60" y="50" width="10" height="10" fill="#000" />
+                    <rect x="75" y="65" width="12" height="12" fill="#000" />
+                    <rect x="50" y="70" width="15" height="10" fill="#000" />
+                    <rect x="25" y="45" width="10" height="10" fill="#000" />
+                  </svg>
+                </div>
+              </div>
+
+              {/* Settings Options Grouped Card (Image 1) */}
+              <div className={`p-4 rounded-3xl border space-y-3 ${cardBgClass}`}>
+                <div className="flex items-center gap-2 text-sm font-bold border-b border-slate-200 dark:border-slate-800 pb-2">
+                  <SettingsIcon className="w-4 h-4 text-blue-500" />
+                  <span>Settings</span>
+                </div>
+
+                <div className="space-y-1 divide-y divide-slate-100 dark:divide-slate-800/60">
+                  {/* Dark Mode Toggle */}
+                  <div className="flex items-center justify-between py-2.5">
+                    <div className="flex items-center gap-3 text-sm font-medium">
+                      <Moon className="w-4 h-4 text-slate-500" />
+                      <span>Dark Mode</span>
+                    </div>
+                    <button
+                      onClick={() => setIsDarkMode(!isDarkMode)}
+                      className={`w-12 h-6 rounded-full transition-colors relative cursor-pointer ${
+                        isDarkMode ? 'bg-blue-600' : 'bg-slate-300'
+                      }`}
+                    >
+                      <span
+                        className={`w-5 h-5 rounded-full bg-white shadow-md absolute top-0.5 transition-all ${
+                          isDarkMode ? 'left-6.5' : 'left-0.5'
+                        }`}
+                      />
+                    </button>
+                  </div>
+
+                  {/* Language Option */}
+                  <div
+                    onClick={() => setCurrentLang(currentLang === 'BN' ? 'EN' : 'BN')}
+                    className="flex items-center justify-between py-2.5 cursor-pointer hover:opacity-80"
+                  >
+                    <div className="flex items-center gap-3 text-sm font-medium">
+                      <Globe className="w-4 h-4 text-slate-500" />
+                      <span>Language</span>
+                    </div>
+                    <span className="text-xs font-bold text-blue-500">
+                      {currentLang === 'BN' ? 'বাংলা' : 'English'}
+                    </span>
+                  </div>
+
+                  {/* Notifications Option */}
+                  <div className="flex items-center justify-between py-2.5">
+                    <div className="flex items-center gap-3 text-sm font-medium">
+                      <Bell className="w-4 h-4 text-slate-500" />
+                      <span>Notifications</span>
+                    </div>
+                    <span className="text-xs text-slate-400 font-semibold">On</span>
+                  </div>
+
+                  {/* Privacy Option */}
+                  <div className="flex items-center justify-between py-2.5 cursor-pointer hover:opacity-80">
+                    <div className="flex items-center gap-3 text-sm font-medium">
+                      <Lock className="w-4 h-4 text-slate-500" />
+                      <span>Privacy</span>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-400" />
+                  </div>
+
+                  {/* Security Option */}
+                  <div className="flex items-center justify-between py-2.5 cursor-pointer hover:opacity-80">
+                    <div className="flex items-center gap-3 text-sm font-medium">
+                      <Shield className="w-4 h-4 text-slate-500" />
+                      <span>Security</span>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-400" />
+                  </div>
+
+                  {/* Block List Option */}
+                  <div className="flex items-center justify-between py-2.5 cursor-pointer hover:opacity-80">
+                    <div className="flex items-center gap-3 text-sm font-medium">
+                      <Slash className="w-4 h-4 text-slate-500" />
+                      <span>Block List</span>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-400" />
+                  </div>
+
+                  {/* Call Recording Option */}
+                  <div className="flex items-center justify-between py-2.5 cursor-pointer hover:opacity-80">
+                    <div className="flex items-center gap-3 text-sm font-medium">
+                      <Disc className="w-4 h-4 text-slate-500" />
+                      <span>Call Recording</span>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-400" />
+                  </div>
+
+                  {/* Backup & Restore Option */}
+                  <div className="flex items-center justify-between py-2.5 cursor-pointer hover:opacity-80">
+                    <div className="flex items-center gap-3 text-sm font-medium">
+                      <Cloud className="w-4 h-4 text-slate-500" />
+                      <span>Backup & Restore</span>
+                    </div>
+                    <ChevronRight className="w-4 h-4 text-slate-400" />
+                  </div>
+
+                  {/* About Option */}
+                  <div className="flex items-center justify-between py-2.5 cursor-pointer hover:opacity-80">
+                    <div className="flex items-center gap-3 text-sm font-medium">
+                      <Info className="w-4 h-4 text-slate-500" />
+                      <span>About BanglaCall</span>
+                    </div>
+                    <span className="text-xs text-slate-400">v2.4.0</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+          )}
+
         </div>
-      </div>
 
-      {/* 1-CLICK AGORA SYSTEM MODE SWITCHER BANNER */}
-      <div className="bg-[#14161B] border-2 border-cyan-500/50 p-3 rounded-lg flex flex-col sm:flex-row items-center justify-between gap-3 shadow-lg">
-        <div className="flex items-center gap-3">
-          <div className="w-9 h-9 rounded-full bg-cyan-500/20 border border-cyan-400 flex items-center justify-center text-cyan-300 shrink-0">
-            <Radio className="w-5 h-5 animate-pulse" />
-          </div>
-          <div>
-            <div className="flex items-center gap-2">
-              <span className="text-[10px] text-cyan-300 uppercase font-extrabold tracking-wider">
-                কল ইঞ্জিন মোড:
-              </span>
-              <span
-                className={`px-2 py-0.5 rounded text-[11px] font-black uppercase tracking-wider border ${
-                  callingEngineMode === 'AGORA'
-                    ? 'bg-cyan-400 text-black border-cyan-300 shadow-[0_0_12px_rgba(34,211,238,0.5)]'
-                    : 'bg-amber-400 text-black border-amber-300'
+        {/* BOTTOM NAVIGATION TAB BAR (Image 6) */}
+        <div className={`border-t py-2 px-4 flex items-center justify-around fixed bottom-0 left-0 right-0 max-w-md mx-auto z-40 ${
+          isDarkMode ? 'bg-[#1a1d26] border-slate-800' : 'bg-white border-slate-200'
+        }`}>
+          {[
+            { id: 'HOME', label: 'Home', icon: HomeIcon },
+            { id: 'CALLS', label: 'Calls', icon: Phone },
+            { id: 'CONTACTS', label: 'Contacts', icon: User },
+            { id: 'MESSAGES', label: 'Messages', icon: MessageSquare },
+            { id: 'SETTINGS', label: 'Settings', icon: SettingsIcon },
+          ].map((tab) => {
+            const Icon = tab.icon;
+            const isActive = activeTab === tab.id;
+            return (
+              <button
+                key={tab.id}
+                onClick={() => setActiveTab(tab.id as any)}
+                className={`flex flex-col items-center gap-1 cursor-pointer transition-all ${
+                  isActive ? 'text-blue-600 dark:text-blue-400 scale-105' : 'text-slate-400 hover:text-slate-600'
                 }`}
               >
-                {callingEngineMode === 'AGORA' ? '🌐 AGORA HD VOICE (আগোরার এপিআই মুড)' : '⚡ MESH PCM VOICE (মেস পিসিএম)'}
-              </span>
-            </div>
-            <p className="text-[11px] text-slate-300 mt-0.5">
-              {callingEngineMode === 'AGORA'
-                ? 'এক ক্লিকে আগোরা সার্ভিস সক্রিয়। হাই ডেফিনেশন বাস্তব সময়ের ভয়েস ক্রিস্টাল ক্লিয়ার কোয়ালিটি।'
-                : 'ইন্টারনেট ছাড়া অফ-গ্রিড পিটুপি পিসিএম ভয়েস স্ট্রিমিং মোড।'}
-            </p>
-          </div>
+                <div className={`p-1 rounded-xl ${isActive ? 'bg-blue-500/10' : ''}`}>
+                  <Icon className="w-5 h-5" />
+                </div>
+                <span className="text-[10px] font-bold">{tab.label}</span>
+              </button>
+            );
+          })}
         </div>
 
-        <button
-          type="button"
-          onClick={() => setCallingEngineMode((prev) => (prev === 'AGORA' ? 'MESH_PCM' : 'AGORA'))}
-          className="px-4 py-2 bg-gradient-to-r from-cyan-500 to-emerald-400 hover:from-cyan-400 hover:to-emerald-300 text-black font-extrabold text-xs uppercase rounded flex items-center justify-center gap-2 cursor-pointer shadow-md transition-all shrink-0"
-        >
-          <RefreshCw className="w-4 h-4" />
-          <span>১-ক্লিকে {callingEngineMode === 'AGORA' ? 'Mesh PCM মুড' : 'Agora মুড'} চালু</span>
-        </button>
       </div>
 
-      {/* Main Mode Navigation (Keypad / Phonebook / Chat) */}
-      <div className="grid grid-cols-3 gap-2 bg-[#0E1014] p-1.5 border border-[#2D3139] rounded">
-        <button
-          onClick={() => setActiveTab('DIALER')}
-          className={`py-2.5 px-2 font-extrabold text-xs sm:text-sm uppercase flex items-center justify-center gap-1.5 transition-all cursor-pointer rounded ${
-            activeTab === 'DIALER'
-              ? 'bg-[#00FF9C] text-black shadow-[0_0_15px_rgba(0,255,156,0.3)]'
-              : 'bg-[#14161B] text-[#8A909D] hover:text-white'
-          }`}
-        >
-          <Phone className="w-4 h-4" />
-          <span>📞 কিপ্যাড ডায়ালার</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('CONTACTS')}
-          className={`py-2.5 px-2 font-extrabold text-xs sm:text-sm uppercase flex items-center justify-center gap-1.5 transition-all cursor-pointer rounded ${
-            activeTab === 'CONTACTS'
-              ? 'bg-[#00FF9C] text-black shadow-[0_0_15px_rgba(0,255,156,0.3)]'
-              : 'bg-[#14161B] text-[#8A909D] hover:text-white'
-          }`}
-        >
-          <BookOpen className="w-4 h-4" />
-          <span>📖 ফোনবুক ({contacts.length})</span>
-        </button>
-
-        <button
-          onClick={() => setActiveTab('CHAT')}
-          className={`py-2.5 px-2 font-extrabold text-xs sm:text-sm uppercase flex items-center justify-center gap-1.5 transition-all cursor-pointer rounded ${
-            activeTab === 'CHAT'
-              ? 'bg-[#00FF9C] text-black shadow-[0_0_15px_rgba(0,255,156,0.3)]'
-              : 'bg-[#14161B] text-[#8A909D] hover:text-white'
-          }`}
-        >
-          <MessageSquare className="w-4 h-4" />
-          <span>💬 এসএমএস টেক্সট</span>
-        </button>
-      </div>
-
-      {/* INCOMING VOICE CALL RINGING MODAL */}
+      {/* INCOMING CALL OVERLAY (Image 3) */}
       {incomingCall && !activeCall.isActive && (
-        <div className="fixed inset-0 bg-black/85 backdrop-blur-md z-50 flex items-center justify-center p-4">
-          <div className="bg-[#14161B] border-2 border-[#00FF9C] rounded-lg p-6 max-w-md w-full shadow-[0_0_50px_rgba(0,255,156,0.4)] text-center space-y-4">
-            <div className="w-16 h-16 bg-[#00FF9C]/20 border-2 border-[#00FF9C] rounded-full flex items-center justify-center mx-auto text-[#00FF9C] animate-pulse">
-              <PhoneCall className="w-8 h-8 animate-bounce" />
-            </div>
+        <div className="fixed inset-0 z-50 bg-black/80 backdrop-blur-xl flex flex-col justify-between p-6 text-white text-center">
+          {/* Top Dynamic Island Notch */}
+          <div className="w-28 h-7 bg-black rounded-full mx-auto mt-2 border border-slate-800" />
+
+          {/* Center Backdrop Avatar & Caller Info (Image 3) */}
+          <div className="space-y-4 my-auto">
+            <img
+              src={DEFAULT_AVATARS[1]}
+              alt={incomingCall.callerName}
+              className="w-32 h-32 rounded-full object-cover mx-auto border-4 border-white/20 shadow-2xl animate-pulse"
+            />
             <div>
-              <span className="text-xs bg-[#00FF9C] text-black font-extrabold px-2.5 py-0.5 rounded uppercase tracking-wider">
-                📞 ইনকামিং অফ-গ্রিড ভয়েস কল...
-              </span>
-              <h3 className="text-2xl font-extrabold text-white mt-2">
-                {incomingCall.callerName}
-              </h3>
-              <p className="text-sm text-[#00FF9C] font-mono font-bold mt-1">
-                ৬-ডিজিটের ফোন কোড: [{incomingCall.callerId}]
-              </p>
-              <p className="text-xs text-[#8A909D] mt-1">
-                আপনাকে সরাসরি মেস ভয়েস কল দিচ্ছেন। কল রিসিভ করতে সবুজ বাটনে চাপুন।
-              </p>
+              <h2 className="text-3xl font-extrabold">{incomingCall.callerName}</h2>
+              <p className="text-lg text-slate-300 font-mono mt-1">+{incomingCall.callerId}</p>
             </div>
 
-            <div className="flex gap-4 pt-2">
+            {/* Answer / Decline Action Controls (Image 3) */}
+            <div className="flex items-center justify-center gap-6 pt-8 max-w-xs mx-auto">
+              {/* Swipe/Click to Answer (Green) */}
               <button
                 onClick={() => {
                   onSendCallSignal?.('ACCEPT', incomingCall.callerId, inputName || myNodeId);
-                  
                   if (callingEngineMode === 'AGORA') {
                     const channelName = `banglacall_${[inputCode || myNodeId, incomingCall.callerId].sort().join('_')}`;
                     agoraVoiceEngine.joinAudioChannel(agoraAppId, channelName, inputCode || myNodeId);
                   }
-
                   setActiveCall({
                     isActive: true,
                     targetCode: incomingCall.callerId,
                     targetName: incomingCall.callerName,
                     durationSec: 0,
                     isMuted: false,
+                    isSpeaker: false,
+                    isBluetooth: false,
+                    isHold: false,
+                    isRecording: false,
+                    isVideo: false,
+                    showKeypad: false,
+                    avatar: DEFAULT_AVATARS[1],
                   });
                 }}
-                className="flex-1 py-3.5 bg-[#00FF9C] hover:bg-[#00FF9C]/90 text-black font-extrabold text-sm uppercase rounded flex items-center justify-center gap-2 cursor-pointer shadow-xl transition-all"
+                className="flex-1 py-4 bg-emerald-500 hover:bg-emerald-600 text-white font-bold rounded-full flex items-center justify-center gap-2 shadow-lg shadow-emerald-500/40 cursor-pointer active:scale-95 transition-all"
               >
-                <Phone className="w-5 h-5" />
-                <span>কল রিসিভ করুন</span>
+                <PhoneCall className="w-6 h-6" />
+                <span className="text-xs">Swipe to Answer</span>
               </button>
 
+              {/* Swipe/Click to Decline (Red) */}
               <button
                 onClick={() => {
                   onSendCallSignal?.('REJECT', incomingCall.callerId, inputName || myNodeId);
                 }}
-                className="flex-1 py-3.5 bg-rose-600 hover:bg-rose-500 text-white font-extrabold text-sm uppercase rounded flex items-center justify-center gap-2 cursor-pointer shadow-xl transition-all"
+                className="flex-1 py-4 bg-rose-600 hover:bg-rose-700 text-white font-bold rounded-full flex items-center justify-center gap-2 shadow-lg shadow-rose-600/40 cursor-pointer active:scale-95 transition-all"
               >
-                <PhoneOff className="w-5 h-5" />
-                <span>রিজেক্ট করুন</span>
+                <PhoneOff className="w-6 h-6" />
+                <span className="text-xs">Swipe to Decline</span>
               </button>
             </div>
+          </div>
+
+          {/* Bottom Quick Reply & Block Caller Buttons (Image 3) */}
+          <div className="flex items-center justify-center gap-4 pb-6">
+            <button className="px-5 py-2.5 rounded-full bg-white/10 hover:bg-white/20 text-xs font-semibold backdrop-blur-md flex items-center gap-2 cursor-pointer">
+              <MessageSquare className="w-4 h-4" />
+              <span>Quick Reply</span>
+            </button>
+            <button className="px-5 py-2.5 rounded-full bg-white/10 hover:bg-white/20 text-xs font-semibold backdrop-blur-md flex items-center gap-2 cursor-pointer">
+              <Slash className="w-4 h-4" />
+              <span>Block Caller</span>
+            </button>
           </div>
         </div>
       )}
 
-      {/* ACTIVE VOICE CALL BANNER */}
+      {/* ACTIVE IN-CALL SCREEN (Image 4) */}
       {activeCall.isActive && (
-        <div className="bg-rose-950/90 border-2 border-rose-500 p-5 rounded shadow-[0_0_35px_rgba(244,63,94,0.4)] space-y-4 animate-pulse">
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-4">
-            <div className="flex items-center gap-3">
-              <div className="w-12 h-12 bg-rose-600 text-white rounded-full flex items-center justify-center shrink-0">
-                <PhoneCall className="w-6 h-6 animate-bounce" />
-              </div>
-              <div>
-                <div className="flex items-center gap-2">
-                  <span className="text-xs bg-rose-500 text-white font-extrabold px-2 py-0.5 rounded uppercase">
-                    🔴 ডাইরেক্ট ভয়েস কল রানিং
-                  </span>
-                  <span className="text-xs text-rose-200 font-mono font-bold">
-                    ⏱️ {Math.floor(activeCall.durationSec / 60)}:
-                    {(activeCall.durationSec % 60).toString().padStart(2, '0')}
-                  </span>
-                </div>
-                <h3 className="text-lg font-extrabold text-white mt-1">
-                  📞 {activeCall.targetName} [{activeCall.targetCode}] এর সাথে কল চলছে
-                </h3>
-                <p className="text-xs text-rose-200/80">
-                  সরাসরি কথা বলুন - অফ-গ্রিড ভয়েস স্ট্রিমিং সক্রিয়।
-                </p>
-                <div className="mt-2 flex flex-wrap gap-2 text-[10px] font-mono">
-                  <span className="px-2 py-0.5 rounded bg-cyan-950 border border-cyan-400 text-cyan-300 font-bold flex items-center gap-1">
-                    ⚡ ট্রান্সপোর্ট: Wi-Fi Direct Mesh (হাই-স্পীড কল | 100 Mbps)
-                  </span>
-                  <span className="px-2 py-0.5 rounded bg-emerald-950 border border-emerald-400 text-emerald-300 font-bold flex items-center gap-1">
-                    📡 ব্যাকআপ: Bluetooth 5.3 BLE (150m Range)
-                  </span>
-                </div>
-              </div>
+        <div className="fixed inset-0 z-50 bg-white dark:bg-slate-900 text-slate-900 dark:text-white flex flex-col justify-between p-6 max-w-md mx-auto shadow-2xl">
+          {/* Top Notch Bar */}
+          <div className="pt-2 flex items-center justify-between text-xs opacity-70">
+            <span>9:41</span>
+            <div className="w-24 h-5 bg-black rounded-full" />
+            <span>5G</span>
+          </div>
+
+          {/* Caller Profile & Timer (Image 4) */}
+          <div className="text-center space-y-3 my-auto">
+            <img
+              src={activeCall.avatar || DEFAULT_AVATARS[0]}
+              alt={activeCall.targetName}
+              className="w-28 h-28 rounded-full object-cover mx-auto border-4 border-blue-500/20 shadow-xl"
+            />
+            <div>
+              <h2 className="text-2xl font-bold">{activeCall.targetName}</h2>
+              <p className="text-lg font-mono font-semibold text-slate-500 mt-1">
+                {formatTimer(activeCall.durationSec)}
+              </p>
             </div>
 
-            <div className="flex items-center gap-3 shrink-0 w-full sm:w-auto">
+            {/* 8 Control Action Buttons Grid (Image 4) */}
+            <div className="grid grid-cols-4 gap-4 pt-8 max-w-xs mx-auto">
+              {/* 1. Mute */}
               <button
-                onClick={() =>
-                  setActiveCall((prev) => ({ ...prev, isMuted: !prev.isMuted }))
-                }
-                className={`flex-1 sm:flex-none px-4 py-2.5 font-bold text-xs uppercase flex items-center justify-center gap-2 border transition-all cursor-pointer rounded ${
-                  activeCall.isMuted
-                    ? 'bg-amber-500 text-black border-amber-400'
-                    : 'bg-slate-800 text-white border-slate-600'
-                }`}
+                onClick={() => setActiveCall((p) => ({ ...p, isMuted: !p.isMuted }))}
+                className="flex flex-col items-center gap-1.5 cursor-pointer"
               >
-                {activeCall.isMuted ? <MicOff className="w-4 h-4" /> : <Mic className="w-4 h-4 text-[#00FF9C]" />}
-                <span>{activeCall.isMuted ? 'মাইক মিউট' : 'মাইক অন'}</span>
+                <div className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${
+                  activeCall.isMuted ? 'bg-blue-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200'
+                }`}>
+                  {activeCall.isMuted ? <MicOff className="w-6 h-6" /> : <Mic className="w-6 h-6" />}
+                </div>
+                <span className="text-[11px] font-medium">Mute</span>
               </button>
 
+              {/* 2. Speaker */}
               <button
-                onClick={handleRejectOrCutCall}
-                className="flex-1 sm:flex-none px-6 py-2.5 bg-rose-600 hover:bg-rose-500 text-white border border-rose-300 font-extrabold text-xs uppercase flex items-center justify-center gap-2 shadow-xl transition-all cursor-pointer rounded"
+                onClick={() => setActiveCall((p) => ({ ...p, isSpeaker: !p.isSpeaker }))}
+                className="flex flex-col items-center gap-1.5 cursor-pointer"
               >
-                <PhoneOff className="w-4 h-4" />
-                <span>❌ কল কেটে দিন (Cut Call)</span>
+                <div className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${
+                  activeCall.isSpeaker ? 'bg-blue-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200'
+                }`}>
+                  {activeCall.isSpeaker ? <Volume2 className="w-6 h-6" /> : <VolumeX className="w-6 h-6" />}
+                </div>
+                <span className="text-[11px] font-medium">Speaker</span>
+              </button>
+
+              {/* 3. Bluetooth */}
+              <button
+                onClick={() => setActiveCall((p) => ({ ...p, isBluetooth: !p.isBluetooth }))}
+                className="flex flex-col items-center gap-1.5 cursor-pointer"
+              >
+                <div className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${
+                  activeCall.isBluetooth ? 'bg-blue-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200'
+                }`}>
+                  <Bluetooth className="w-6 h-6" />
+                </div>
+                <span className="text-[11px] font-medium">Bluetooth</span>
+              </button>
+
+              {/* 4. Keypad */}
+              <button
+                onClick={() => setActiveCall((p) => ({ ...p, showKeypad: !p.showKeypad }))}
+                className="flex flex-col items-center gap-1.5 cursor-pointer"
+              >
+                <div className="w-14 h-14 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center">
+                  <Grid className="w-6 h-6" />
+                </div>
+                <span className="text-[11px] font-medium">Keypad</span>
+              </button>
+
+              {/* 5. Add Call */}
+              <button className="flex flex-col items-center gap-1.5 cursor-pointer">
+                <div className="w-14 h-14 rounded-full bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200 flex items-center justify-center">
+                  <UserPlus className="w-6 h-6" />
+                </div>
+                <span className="text-[11px] font-medium">Add Call</span>
+              </button>
+
+              {/* 6. Hold */}
+              <button
+                onClick={() => setActiveCall((p) => ({ ...p, isHold: !p.isHold }))}
+                className="flex flex-col items-center gap-1.5 cursor-pointer"
+              >
+                <div className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${
+                  activeCall.isHold ? 'bg-amber-500 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200'
+                }`}>
+                  <Pause className="w-6 h-6" />
+                </div>
+                <span className="text-[11px] font-medium">Hold</span>
+              </button>
+
+              {/* 7. Record */}
+              <button
+                onClick={() => setActiveCall((p) => ({ ...p, isRecording: !p.isRecording }))}
+                className="flex flex-col items-center gap-1.5 cursor-pointer"
+              >
+                <div className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${
+                  activeCall.isRecording ? 'bg-rose-600 text-white animate-pulse' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200'
+                }`}>
+                  <Disc className="w-6 h-6" />
+                </div>
+                <span className="text-[11px] font-medium">Record</span>
+              </button>
+
+              {/* 8. Video Call */}
+              <button
+                onClick={() => setActiveCall((p) => ({ ...p, isVideo: !p.isVideo }))}
+                className="flex flex-col items-center gap-1.5 cursor-pointer"
+              >
+                <div className={`w-14 h-14 rounded-full flex items-center justify-center transition-all ${
+                  activeCall.isVideo ? 'bg-blue-600 text-white' : 'bg-slate-100 dark:bg-slate-800 text-slate-700 dark:text-slate-200'
+                }`}>
+                  <Video className="w-6 h-6" />
+                </div>
+                <span className="text-[11px] font-medium">Video Call</span>
               </button>
             </div>
+          </div>
+
+          {/* Large Red End Call Button at Bottom Center (Image 4) */}
+          <div className="flex justify-center pb-8">
+            <button
+              onClick={handleRejectOrCutCall}
+              className="w-16 h-16 rounded-full bg-rose-600 hover:bg-rose-700 text-white flex items-center justify-center shadow-lg shadow-rose-600/40 cursor-pointer active:scale-95 transition-all"
+            >
+              <PhoneOff className="w-8 h-8" />
+            </button>
           </div>
         </div>
       )}
 
-      {/* TAB 1: KEYPAD DIALER */}
-      {activeTab === 'DIALER' && (
-        <div className="bg-[#14161B] border border-[#2D3139] p-4 space-y-5 rounded max-w-lg mx-auto">
-          {/* Display screen for typed 6-digit code */}
-          <div className="bg-[#0E1014] border-2 border-[#00FF9C]/60 p-4 rounded text-center space-y-1 shadow-inner">
-            <span className="text-[10px] text-[#8A909D] uppercase tracking-widest font-bold">
-              ৬ সংখ্যার ফোন কোড লিখুন:
-            </span>
-            <div className="text-3xl font-extrabold text-[#00FF9C] tracking-widest h-10 flex items-center justify-center">
-              {dialerNumber || <span className="text-slate-700">______</span>}
-            </div>
-          </div>
-
-          {/* Keypad Grid */}
-          <div className="grid grid-cols-3 gap-3 max-w-xs mx-auto">
-            {['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'].map((digit) => (
+      {/* Add Contact Modal Form */}
+      {showAddContactModal && (
+        <div className="fixed inset-0 z-50 bg-black/60 backdrop-blur-sm flex items-center justify-center p-4">
+          <form
+            onSubmit={handleAddContact}
+            className={`w-full max-w-sm p-5 rounded-3xl border space-y-4 shadow-2xl ${cardBgClass}`}
+          >
+            <div className="flex items-center justify-between">
+              <h3 className="font-bold text-base">Add New Contact</h3>
               <button
-                key={digit}
-                onClick={() => handleDialerKeyPress(digit)}
-                className="py-3.5 bg-[#0E1014] hover:bg-[#1A1D24] active:bg-[#00FF9C] active:text-black border border-[#2D3139] hover:border-[#00FF9C] text-xl font-extrabold text-white rounded transition-all cursor-pointer shadow-md"
+                type="button"
+                onClick={() => setShowAddContactModal(false)}
+                className="p-1 text-slate-400 hover:text-slate-600"
               >
-                {digit}
-              </button>
-            ))}
-          </div>
-
-          {/* Controls: Backspace, Clear, Call, SMS */}
-          <div className="space-y-3 pt-2">
-            <div className="flex gap-2">
-              <button
-                onClick={handleDialerBackspace}
-                disabled={!dialerNumber}
-                className="flex-1 py-2 bg-slate-800 hover:bg-slate-700 disabled:opacity-40 text-slate-200 border border-slate-600 text-xs font-bold uppercase flex items-center justify-center gap-1.5 rounded cursor-pointer"
-              >
-                <Delete className="w-4 h-4" />
-                <span>মুছুন (Delete)</span>
-              </button>
-              <button
-                onClick={handleDialerClear}
-                disabled={!dialerNumber}
-                className="px-4 py-2 bg-rose-950 hover:bg-rose-900 disabled:opacity-40 text-rose-300 border border-rose-800 text-xs font-bold uppercase rounded cursor-pointer"
-              >
-                ক্লিয়ার
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <div className="grid grid-cols-2 gap-3">
-              <button
-                onClick={() => handleStartCall(dialerNumber)}
-                disabled={dialerNumber.length !== 6}
-                className="py-3 bg-[#00FF9C] hover:bg-[#00FF9C]/90 disabled:bg-slate-800 disabled:text-slate-600 text-black font-extrabold text-sm uppercase flex items-center justify-center gap-2 rounded shadow-[0_0_15px_rgba(0,255,156,0.3)] transition-all cursor-pointer"
-              >
-                <PhoneCall className="w-5 h-5" />
-                <span>📞 কল দিন</span>
-              </button>
-
-              <button
-                onClick={() => handleOpenSmsWithNumber(dialerNumber)}
-                disabled={dialerNumber.length !== 6}
-                className="py-3 bg-cyan-500 hover:bg-cyan-400 disabled:bg-slate-800 disabled:text-slate-600 text-black font-extrabold text-sm uppercase flex items-center justify-center gap-2 rounded shadow-md transition-all cursor-pointer"
-              >
-                <MessageSquare className="w-5 h-5" />
-                <span>💬 এসএমএস</span>
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 2: PHONEBOOK & CONTACTS */}
-      {activeTab === 'CONTACTS' && (
-        <div className="bg-[#14161B] border border-[#2D3139] p-4 space-y-4 rounded">
-          {/* Top Bar with Search & Add Contact Button */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-3 border-b border-[#2D3139] pb-3">
-            <div className="relative w-full sm:w-64">
-              <Search className="w-4 h-4 absolute left-3 top-2.5 text-[#8A909D]" />
+            <div className="space-y-3">
               <input
                 type="text"
-                placeholder="কন্টাক্ট সার্চ করুন..."
-                value={contactSearchQuery}
-                onChange={(e) => setContactSearchQuery(e.target.value)}
-                className="w-full bg-[#0E1014] border border-[#2D3139] focus:border-[#00FF9C] text-white pl-9 pr-3 py-1.5 text-xs rounded focus:outline-none"
+                placeholder="Contact Name"
+                value={newContactName}
+                onChange={(e) => setNewContactName(e.target.value)}
+                className="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-800"
+                required
+              />
+              <input
+                type="text"
+                maxLength={6}
+                placeholder="6-Digit Phone Code"
+                value={newContactCode}
+                onChange={(e) => setNewContactCode(e.target.value.replace(/\D/g, ''))}
+                className="w-full px-4 py-2.5 rounded-xl border border-slate-300 dark:border-slate-700 text-sm font-bold tracking-widest text-blue-600 focus:outline-none focus:ring-2 focus:ring-blue-500 dark:bg-slate-800"
+                required
               />
             </div>
 
-            <div className="flex gap-2 w-full sm:w-auto">
+            <div className="flex justify-end gap-2 pt-2">
               <button
                 type="button"
-                onClick={fetchDbUsers}
-                disabled={isSyncingDb}
-                className="px-3 py-2 bg-slate-800 hover:bg-slate-700 text-cyan-300 font-bold text-xs uppercase flex items-center justify-center gap-1.5 rounded cursor-pointer border border-cyan-500/30"
+                onClick={() => setShowAddContactModal(false)}
+                className="px-4 py-2 rounded-xl text-xs font-semibold bg-slate-200 dark:bg-slate-700"
               >
-                <RefreshCw className={`w-3.5 h-3.5 ${isSyncingDb ? 'animate-spin' : ''}`} />
-                <span>ডিবি রিফ্রেশ ({dbUsersCount})</span>
+                Cancel
               </button>
               <button
-                onClick={() => setShowAddContactModal(true)}
-                className="px-4 py-2 bg-[#00FF9C] text-black font-extrabold text-xs uppercase flex items-center justify-center gap-1.5 rounded hover:bg-[#00FF9C]/90 cursor-pointer shadow-md"
+                type="submit"
+                className="px-5 py-2 rounded-xl text-xs font-bold bg-blue-600 text-white hover:bg-blue-700"
               >
-                <UserPlus className="w-4 h-4" />
-                <span>নতুন কন্টাক্ট সেভ করুন</span>
+                Save Contact
               </button>
             </div>
-          </div>
-
-          {/* Add Contact Modal Form */}
-          {showAddContactModal && (
-            <form
-              onSubmit={handleAddContact}
-              className="bg-[#0E1014] border-2 border-[#00FF9C] p-4 rounded space-y-3"
-            >
-              <h4 className="text-xs font-extrabold text-[#00FF9C] uppercase flex items-center gap-1.5">
-                <UserPlus className="w-4 h-4" />
-                <span>নতুন কন্টাক্ট যোগ করুন:</span>
-              </h4>
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                <input
-                  type="text"
-                  placeholder="নাম (যেমন: সাব্বির আহমেদ)"
-                  value={newContactName}
-                  onChange={(e) => setNewContactName(e.target.value)}
-                  className="bg-[#14161B] border border-[#2D3139] focus:border-[#00FF9C] text-white px-3 py-2 text-xs rounded focus:outline-none"
-                  required
-                />
-                <input
-                  type="text"
-                  maxLength={6}
-                  placeholder="৬ সংখ্যার ফোন নম্বর (যেমন: 654321)"
-                  value={newContactCode}
-                  onChange={(e) => setNewContactCode(e.target.value.replace(/\D/g, ''))}
-                  className="bg-[#14161B] border border-[#2D3139] focus:border-[#00FF9C] text-[#00FF9C] px-3 py-2 text-xs rounded font-bold tracking-widest focus:outline-none"
-                  required
-                />
-              </div>
-              <div className="flex justify-end gap-2">
-                <button
-                  type="button"
-                  onClick={() => setShowAddContactModal(false)}
-                  className="px-3 py-1.5 bg-slate-800 text-slate-300 text-xs font-bold rounded cursor-pointer"
-                >
-                  বাতিল
-                </button>
-                <button
-                  type="submit"
-                  className="px-4 py-1.5 bg-[#00FF9C] text-black font-extrabold text-xs uppercase rounded cursor-pointer"
-                >
-                  সেভ করুন
-                </button>
-              </div>
-            </form>
-          )}
-
-          {/* Saved Contacts List */}
-          <div className="space-y-3">
-            <h4 className="text-xs font-extrabold text-[#8A909D] uppercase tracking-wider">
-              📖 সেভ করা কন্টাক্টস ({filteredContacts.length}):
-            </h4>
-
-            {filteredContacts.length === 0 ? (
-              <p className="text-xs text-slate-500 py-4 text-center">কোনো কন্টাক্ট পাওয়া যায়নি।</p>
-            ) : (
-              <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-                {filteredContacts.map((contact) => {
-                  const isOnlineInMesh = nodes.some(
-                    (n) => n.id === contact.code && n.status === 'ONLINE'
-                  );
-
-                  return (
-                    <div
-                      key={contact.id}
-                      className="bg-[#0E1014] border border-[#2D3139] hover:border-[#00FF9C] p-3.5 rounded flex items-center justify-between gap-3 transition-all"
-                    >
-                      <div className="flex items-center gap-3">
-                        <div className="w-10 h-10 bg-[#14161B] border border-[#2D3139] rounded-full flex items-center justify-center text-[#00FF9C] font-extrabold text-sm">
-                          {contact.name.charAt(0)}
-                        </div>
-                        <div>
-                          <div className="flex items-center gap-2">
-                            <h5 className="font-extrabold text-sm text-white">{contact.name}</h5>
-                            <span
-                              className={`text-[9px] px-1.5 py-0.2 font-bold rounded border ${
-                                isOnlineInMesh
-                                  ? 'bg-[#00FF9C]/10 text-[#00FF9C] border-[#00FF9C]/30'
-                                  : 'bg-slate-800 text-slate-400 border-slate-700'
-                              }`}
-                            >
-                              {isOnlineInMesh ? '🟢 অনলাইন' : '⚪ অফলাইন'}
-                            </span>
-                          </div>
-                          <span className="text-xs font-mono text-[#00FF9C] font-bold">
-                            📞 {contact.code}
-                          </span>
-                        </div>
-                      </div>
-
-                      <div className="flex items-center gap-1.5 shrink-0">
-                        <button
-                          onClick={() => handleStartCall(contact.code, contact.name)}
-                          className="p-2 bg-[#00FF9C] hover:bg-[#00FF9C]/90 text-black font-extrabold rounded cursor-pointer shadow"
-                          title="কল দিন"
-                        >
-                          <PhoneCall className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleOpenSmsWithNumber(contact.code)}
-                          className="p-2 bg-cyan-500 hover:bg-cyan-400 text-black font-extrabold rounded cursor-pointer shadow"
-                          title="এসএমএস পাঠান"
-                        >
-                          <MessageSquare className="w-4 h-4" />
-                        </button>
-                        <button
-                          onClick={() => handleDeleteContact(contact.id)}
-                          className="p-2 bg-slate-800 hover:bg-rose-950 text-slate-400 hover:text-rose-400 rounded cursor-pointer"
-                          title="ডিলিট"
-                        >
-                          <Delete className="w-4 h-4" />
-                        </button>
-                      </div>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-
-          {/* Registered Online Mesh Users Directory */}
-          <div className="space-y-3 pt-4 border-t border-[#2D3139]">
-            <h4 className="text-xs font-extrabold text-[#00FF9C] uppercase tracking-wider flex items-center justify-between">
-              <span>🌐 নেটওয়ার্কে অনলাইন থাকা অন্যান্য সকল ইউজার ({registeredUsersInMesh.length}):</span>
-              <span className="text-[10px] text-[#8A909D] font-normal">অফ-গ্রিড মেশ অটো-আবিষ্কার</span>
-            </h4>
-
-            <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
-              {registeredUsersInMesh.map((node) => (
-                <div
-                  key={node.id}
-                  className="bg-[#0E1014] border border-[#2D3139] p-3 rounded flex items-center justify-between gap-3"
-                >
-                  <div className="flex items-center gap-2.5">
-                    <div className="w-8 h-8 bg-[#14161B] border border-[#00FF9C]/40 rounded-full flex items-center justify-center text-[#00FF9C] text-xs font-bold">
-                      {node.name.charAt(0)}
-                    </div>
-                    <div>
-                      <h5 className="font-bold text-xs text-white">{node.name}</h5>
-                      <span className="text-[11px] font-mono text-[#00FF9C]">
-                        কোড: {node.id}
-                      </span>
-                    </div>
-                  </div>
-
-                  <div className="flex items-center gap-1.5">
-                    <button
-                      onClick={() => handleStartCall(node.id, node.name)}
-                      className="px-2.5 py-1 bg-[#00FF9C] text-black font-extrabold text-[11px] uppercase rounded cursor-pointer"
-                    >
-                      📞 কল
-                    </button>
-                    <button
-                      onClick={() => handleOpenSmsWithNumber(node.id)}
-                      className="px-2.5 py-1 bg-cyan-500 text-black font-extrabold text-[11px] uppercase rounded cursor-pointer"
-                    >
-                      💬 চ্যাট
-                    </button>
-                  </div>
-                </div>
-              ))}
-            </div>
-          </div>
-        </div>
-      )}
-
-      {/* TAB 3: SMS & CHAT MESSAGING */}
-      {activeTab === 'CHAT' && (
-        <div className="bg-[#14161B] border border-[#2D3139] p-4 space-y-4 rounded">
-          {/* Target Selector */}
-          <div className="flex flex-col sm:flex-row items-center justify-between gap-2 bg-[#0E1014] p-3 border border-[#2D3139] rounded">
-            <label className="text-xs font-bold text-[#00FF9C] uppercase flex items-center gap-1.5">
-              <User className="w-4 h-4" />
-              <span>প্রাপক নির্বাচন করুন (Recipient):</span>
-            </label>
-            <select
-              value={chatTargetCode}
-              onChange={(e) => setChatTargetCode(e.target.value)}
-              className="bg-[#14161B] text-[#00FF9C] border border-[#00FF9C]/60 px-3 py-1.5 text-xs font-bold uppercase focus:outline-none focus:border-[#00FF9C] cursor-pointer w-full sm:w-auto rounded"
-            >
-              <option value="BROADCAST">📢 সকল নোডে সাধারণ এসএমএস (Broadcast All)</option>
-              {contacts.map((c) => (
-                <option key={c.id} value={c.code}>
-                  👤 {c.name} ({c.code})
-                </option>
-              ))}
-              {registeredUsersInMesh.map((node) => (
-                <option key={node.id} value={node.id}>
-                  📱 {node.name} ({node.id})
-                </option>
-              ))}
-            </select>
-          </div>
-
-          {/* Quick Template Buttons */}
-          <div className="space-y-1.5">
-            <span className="text-[11px] text-[#8A909D] uppercase font-bold">
-              ⚡ দ্রুত এসএমএস টেমপ্লেট:
-            </span>
-            <div className="flex flex-wrap gap-2">
-              {[
-                'আমি ভালো আছি 👍',
-                'আমাকে কল করো 📞',
-                'জরুরী সাহায্য দরকার 🚨',
-                'আমি লোকেশনে পৌঁছে গেছি 📍',
-                'তুমি কোথায় আছো? 🗺️',
-              ].map((template) => (
-                <button
-                  key={template}
-                  onClick={() => handleQuickSms(template)}
-                  className="px-2.5 py-1 bg-[#0E1014] hover:bg-[#1A1D24] border border-[#2D3139] hover:border-[#00FF9C] text-xs text-[#00FF9C] rounded transition-all cursor-pointer"
-                >
-                  {template}
-                </button>
-              ))}
-            </div>
-          </div>
-
-          {/* Message List */}
-          <div className="bg-[#0E1014] border border-[#2D3139] h-72 overflow-y-auto p-3 space-y-3 font-mono rounded">
-            {messages.length === 0 ? (
-              <div className="h-full flex flex-col items-center justify-center text-[#8A909D] text-xs">
-                <MessageSquare className="w-8 h-8 mb-2 opacity-50" />
-                <span>কোনো এসএমএস বা মেসেজ নেই। নিচে টাইপ করে পাঠান।</span>
-              </div>
-            ) : (
-              messages.map((msg) => (
-                <div
-                  key={msg.id}
-                  className={`flex flex-col ${msg.isSelf ? 'items-end' : 'items-start'}`}
-                >
-                  <div
-                    className={`max-w-[85%] p-2.5 rounded border text-xs ${
-                      msg.isSelf
-                        ? 'bg-[#00FF9C]/10 border-[#00FF9C]/40 text-white'
-                        : 'bg-[#14161B] border-[#2D3139] text-[#E1E4EA]'
-                    }`}
-                  >
-                    <div className="flex items-center justify-between gap-3 text-[10px] text-[#8A909D] border-b border-white/10 pb-1 mb-1">
-                      <span className="font-bold text-[#00FF9C]">{msg.senderName}</span>
-                      <span>
-                        {new Date(msg.timestamp).toLocaleTimeString([], {
-                          hour: '2-digit',
-                          minute: '2-digit',
-                        })}
-                      </span>
-                    </div>
-                    <p className="text-sm font-sans">{msg.content}</p>
-                    <div className="mt-1 flex items-center justify-end text-[9px] text-[#00FF9C]">
-                      <ShieldCheck className="w-3 h-3 mr-1" />
-                      <span>E2EE AES-256</span>
-                    </div>
-                  </div>
-                </div>
-              ))
-            )}
-          </div>
-
-          {/* Chat Input */}
-          <form onSubmit={handleSendChat} className="flex gap-2">
-            <input
-              type="text"
-              placeholder="মেসেজ বা এসএমএস টাইপ করুন..."
-              value={chatInput}
-              onChange={(e) => setChatInput(e.target.value)}
-              className="flex-1 bg-[#0E1014] border border-[#2D3139] focus:border-[#00FF9C] text-white px-3 py-2 text-xs focus:outline-none rounded"
-            />
-            <button
-              type="submit"
-              className="px-5 py-2 bg-[#00FF9C] text-black font-extrabold text-xs uppercase flex items-center gap-1.5 hover:bg-[#00FF9C]/90 rounded cursor-pointer shadow"
-            >
-              <Send className="w-4 h-4" />
-              <span>পাঠান</span>
-            </button>
           </form>
         </div>
       )}
-
-      {/* Clean Off-Grid Footer Box for Simple Users */}
-      <div className="bg-[#0E1014] border border-[#2D3139] p-3 rounded flex flex-col sm:flex-row items-center justify-between gap-2 text-xs text-[#8A909D]">
-        <div className="flex items-center gap-2">
-          <ShieldCheck className="w-4 h-4 text-[#00FF9C]" />
-          <span>
-            অফ-গ্রিড মেস সিকিউর নেটওয়ার্ক • কোনো ইন্টারনেট বা প্রসেসিং চার্জ নেই।
-          </span>
-        </div>
-        <span className="text-[11px] text-[#00FF9C] font-bold flex items-center gap-1">
-          <span className="w-2 h-2 rounded-full bg-[#00FF9C]" />
-          নিরাপদ এন্ড-টু-এন্ড এনক্রিপ্টেড
-        </span>
-      </div>
     </div>
   );
 };

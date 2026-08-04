@@ -28,7 +28,7 @@ var import_path = __toESM(require("path"), 1);
 var import_fs = __toESM(require("fs"), 1);
 var import_ws = require("ws");
 var import_vite = require("vite");
-var import_agora_token = require("agora-token");
+var import_agora_token = __toESM(require("agora-token"), 1);
 
 // src/db/database.ts
 var import_promise = __toESM(require("mysql2/promise"), 1);
@@ -40,30 +40,35 @@ var DB_PORT = Number(process.env.DB_PORT) || 3306;
 var pool = null;
 var isConnected = false;
 async function initDatabase() {
-  try {
-    console.log(`[Database] Attempting connection to MySQL DB '${DB_NAME}' on '${DB_HOST}:${DB_PORT}'...`);
-    pool = import_promise.default.createPool({
-      host: DB_HOST,
-      user: DB_USER,
-      password: DB_PASSWORD,
-      database: DB_NAME,
-      port: DB_PORT,
-      waitForConnections: true,
-      connectionLimit: 10,
-      queueLimit: 0,
-      connectTimeout: 3e3
-    });
-    const connection = await pool.getConnection();
-    console.log(`[Database] \u2705 MySQL Database Connected Successfully!`);
-    connection.release();
-    isConnected = true;
-    await createTables();
-    return true;
-  } catch (error) {
-    console.warn(`[Database] \u26A0\uFE0F MySQL Connection failed (${error.message}). Running in fallback local mode.`);
-    isConnected = false;
-    return false;
+  const hostsToTry = Array.from(/* @__PURE__ */ new Set([DB_HOST, "s3378.usc1.stableserver.net", "localhost"])).filter(Boolean);
+  for (const host of hostsToTry) {
+    try {
+      console.log(`[Database] Attempting connection to MySQL DB '${DB_NAME}' on '${host}:${DB_PORT}'...`);
+      const testPool = import_promise.default.createPool({
+        host,
+        user: DB_USER,
+        password: DB_PASSWORD,
+        database: DB_NAME,
+        port: DB_PORT,
+        waitForConnections: true,
+        connectionLimit: 10,
+        queueLimit: 0,
+        connectTimeout: 3e3
+      });
+      const connection = await testPool.getConnection();
+      console.log(`[Database] \u2705 MySQL Database Connected Successfully to host '${host}'!`);
+      connection.release();
+      pool = testPool;
+      isConnected = true;
+      await createTables();
+      return true;
+    } catch (error) {
+      console.warn(`[Database] MySQL connection attempt to '${host}' failed (${error.message}).`);
+    }
   }
+  console.warn(`[Database] \u26A0\uFE0F Could not connect to MySQL server on any host. Running in fallback local JSON storage mode.`);
+  isConnected = false;
+  return false;
 }
 async function createTables() {
   if (!pool || !isConnected) return;
@@ -365,6 +370,7 @@ function isDbConnected() {
 }
 
 // server.ts
+var { RtcTokenBuilder, RtcRole } = import_agora_token.default;
 var PORT = 3e3;
 var app = (0, import_express.default)();
 app.use(import_express.default.json({ limit: "50mb" }));
@@ -1031,13 +1037,13 @@ app.get("/api/agora/token", (req, res) => {
       const expirationTimeInSeconds = 3600;
       const currentTimestamp = Math.floor(Date.now() / 1e3);
       const privilegeExpiredTs = currentTimestamp + expirationTimeInSeconds;
-      token = import_agora_token.RtcTokenBuilder.buildTokenWithUid(
+      token = RtcTokenBuilder.buildTokenWithUid(
         agoraConfig.appId,
         agoraConfig.appCertificate,
         channelName,
         0,
         // wildcard UID 0 allows any client joining the channel
-        import_agora_token.RtcRole.PUBLISHER,
+        RtcRole.PUBLISHER,
         privilegeExpiredTs,
         privilegeExpiredTs
       );

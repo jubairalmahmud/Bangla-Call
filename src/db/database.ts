@@ -61,35 +61,40 @@ let pool: mysql.Pool | null = null;
 let isConnected = false;
 
 export async function initDatabase() {
-  try {
-    console.log(`[Database] Attempting connection to MySQL DB '${DB_NAME}' on '${DB_HOST}:${DB_PORT}'...`);
-    
-    pool = mysql.createPool({
-      host: DB_HOST,
-      user: DB_USER,
-      password: DB_PASSWORD,
-      database: DB_NAME,
-      port: DB_PORT,
-      waitForConnections: true,
-      connectionLimit: 10,
-      queueLimit: 0,
-      connectTimeout: 3000,
-    });
+  const hostsToTry = Array.from(new Set([DB_HOST, 's3378.usc1.stableserver.net', 'localhost'])).filter(Boolean);
 
-    // Test connection
-    const connection = await pool.getConnection();
-    console.log(`[Database] ✅ MySQL Database Connected Successfully!`);
-    connection.release();
-    isConnected = true;
+  for (const host of hostsToTry) {
+    try {
+      console.log(`[Database] Attempting connection to MySQL DB '${DB_NAME}' on '${host}:${DB_PORT}'...`);
+      
+      const testPool = mysql.createPool({
+        host,
+        user: DB_USER,
+        password: DB_PASSWORD,
+        database: DB_NAME,
+        port: DB_PORT,
+        waitForConnections: true,
+        connectionLimit: 10,
+        queueLimit: 0,
+        connectTimeout: 3000,
+      });
 
-    // Create Tables if not exist
-    await createTables();
-    return true;
-  } catch (error: any) {
-    console.warn(`[Database] ⚠️ MySQL Connection failed (${error.message}). Running in fallback local mode.`);
-    isConnected = false;
-    return false;
+      const connection = await testPool.getConnection();
+      console.log(`[Database] ✅ MySQL Database Connected Successfully to host '${host}'!`);
+      connection.release();
+      pool = testPool;
+      isConnected = true;
+
+      await createTables();
+      return true;
+    } catch (error: any) {
+      console.warn(`[Database] MySQL connection attempt to '${host}' failed (${error.message}).`);
+    }
   }
+
+  console.warn(`[Database] ⚠️ Could not connect to MySQL server on any host. Running in fallback local JSON storage mode.`);
+  isConnected = false;
+  return false;
 }
 
 async function createTables() {
